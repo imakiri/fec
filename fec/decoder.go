@@ -3,8 +3,8 @@ package fec
 import (
 	"context"
 	"github.com/go-faster/errors"
+	"github.com/imakiri/fec/unit"
 	"github.com/klauspost/reedsolomon"
-	"haha/unit"
 	"io"
 	"log"
 	"math/rand"
