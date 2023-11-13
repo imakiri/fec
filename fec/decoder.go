@@ -7,8 +7,6 @@ import (
 	"github.com/klauspost/reedsolomon"
 	"io"
 	"log"
-	"math/rand"
-	"sync/atomic"
 )
 
 func Decode(ctx context.Context, src io.ReadCloser, dst io.WriteCloser, data, parity int) error {
@@ -18,6 +16,11 @@ func Decode(ctx context.Context, src io.ReadCloser, dst io.WriteCloser, data, pa
 	if dst == nil {
 		return errors.New("dst is nil")
 	}
+
+	var total = uint32(data) + uint32(parity)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	var enc, err = reedsolomon.New(data, parity)
 	if err != nil {
@@ -29,170 +32,89 @@ func Decode(ctx context.Context, src io.ReadCloser, dst io.WriteCloser, data, pa
 	dst = unit.NewWriter(dst, size, false, true)
 	var buf = make([]byte, PacketSize)
 
-	for seq := uint64(0); ; seq++ {
+	queue, shutdown, err := NewQueue(uint32(data), total, 8)
+	if err != nil {
+		return errors.Wrap(err, "NewQueue")
+	}
+	defer shutdown()
+
+	var decodeErr = make(chan error)
+	var processErr = make(chan error)
+	go func() {
+		decodeErr <- decode(ctx, src, queue, buf)
+	}()
+	go func() {
+		processErr <- process(ctx, uint32(data), total, enc, dst, queue.processQueue)
+	}()
+
+	select {
+	case err = <-decodeErr:
+	case err = <-processErr:
+	}
+	cancel()
+	shutdown()
+	return err
+}
+
+func process(ctx context.Context, dataShards, shardsTotal uint32, enc reedsolomon.Encoder, dst io.WriteCloser, processQueue chan []*Packet) error {
+	if dataShards > shardsTotal {
+		return errors.New("invalid data shards number")
+	}
+
+	var packets []*Packet
+	var shards = make([][]byte, shardsTotal)
+	var chunk = new(Chunk)
+	var err error
+	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
-			err = decode(enc, src, dst, seq, buf)
+		case packets = <-processQueue:
+			for i := range packets {
+				shards[packets[i].psn] = packets[i].data
+			}
+
+			err = enc.ReconstructData(shards)
+			if err != nil {
+				log.Println("enc.ReconstructData(shards): ", err)
+				continue
+			}
+
+			var ok = chunk.Unmarshal(shards[:dataShards])
+			if !ok {
+				log.Println("chunk.Unmarshal(shards[:dataShards]): not ok")
+				continue
+			}
+
+			n, err := dst.Write(chunk.Data())
 			if err != nil {
 				return err
 			}
+			if n != len(chunk.Data()) {
+				return errors.New("incomplete write")
+			}
 		}
 	}
 }
 
-func decode(enc reedsolomon.Encoder, src io.ReadCloser, dst io.WriteCloser, order uint64, buf []byte) error {
-	var n, err = src.Read(buf)
-	if err != nil {
-		return err
-	}
-
-	var id = rand.Uint32()
-	var chunk = NewChunk(id, order, PacketDataSize, n, buf)
-	var data = chunk.Marshal()
-	var shards, _ = enc.Split(data)
-
-	err = enc.Encode(shards)
-	if err != nil {
-		return err
-	}
-
-	var packet Packet
-	for i := range shards {
-		packet = NewPacket(uint16(i), id, shards[i])
-		var data, _ = packet.Marshal()
-
-		_, err = dst.Write(data)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-type Decoder struct {
-	c        Codec
-	buf      []byte
-	totalSrc *uint64
-	totalDst *uint64
-}
-
-func (d Decoder) ChunkSize() int {
-	return PacketSize
-}
-
-func (d *Decoder) read(ctx context.Context, rem *Packet, src io.Reader) ([]Packet, *Packet, error) {
-	var packets = make([]Packet, 0, d.c.totalShards())
-	var id uint16
-	if rem != nil {
-		id = rem.csn
-		packets = append(packets, *rem)
-	}
-
+func decode(ctx context.Context, src io.ReadCloser, queue *Queue, buf []byte) error {
 	for {
-		if len(packets) == d.c.totalShards() {
-			return packets, nil, nil
-		}
-
 		select {
 		case <-ctx.Done():
-			return packets, nil, nil
-		default:
-			var n, err = src.Read(d.buf)
-			if err != nil {
-				return packets, nil, err
-			}
-
-			atomic.AddUint64(d.totalSrc, uint64(n))
-
-			var packet Packet
-			var rem = packet.Unmarshal(d.buf)
-			if rem != nil {
-				return nil, nil, errors.New("not nil rem: invalid buffer size")
-			}
-
-			if !packet.Validate() {
-				log.Println("invalid packet")
-				continue
-			}
-
-			//log.Print("packet info ", packet.csn, packet.psn, packet.hash)
-
-			if len(packets) == 0 {
-				id = packet.csn
-				packets = append(packets, packet)
-			} else {
-				if id == packet.csn {
-					packets = append(packets, packet)
-				} else {
-					return packets, &packet, nil
-				}
-			}
-		}
-	}
-}
-
-func (d *Decoder) write(ctx context.Context, packets []Packet, dst io.Writer) error {
-	select {
-	case <-ctx.Done():
-		return nil
-	default:
-		var shards = make([][]byte, d.c.totalShards())
-		var id *uint16
-		for i := range packets {
-			if packets[i].psn >= uint32(len(shards)) {
-				continue
-			}
-			shards[packets[i].psn] = packets[i].data[:]
-			if id == nil {
-				id = &packets[i].csn
-			}
-		}
-		if id == nil {
-			id = new(uint16)
-		}
-
-		var err = d.c.enc.ReconstructData(shards)
-		if err != nil {
-			log.Println(err, " csn ", *id)
 			return nil
-		}
-
-		for i := range shards[:d.c.dataShards] {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				n, err := dst.Write(shards[i])
-				if err != nil {
-					return err
-				}
-				if n != PacketDataSize {
-					return errors.New("n != PacketSize")
-				}
-				atomic.AddUint64(d.totalDst, uint64(n))
+		default:
+			var _, err = src.Read(buf)
+			if err != nil {
+				return err
 			}
-		}
 
-		return nil
-	}
-}
+			var packet = new(Packet)
+			var ok = packet.Unmarshal(buf)
+			if !ok {
+				continue
+			}
 
-func (d *Decoder) Decode(ctx context.Context, src io.Reader, dst io.Writer) error {
-	d.buf = make([]byte, d.ChunkSize())
-	var rem *Packet
-	var packets []Packet
-	var err error
-	for {
-		packets, rem, err = d.read(ctx, rem, src)
-		if err != nil {
-			return err
-		}
-
-		err = d.write(ctx, packets, dst)
-		if err != nil {
-			return err
+			queue.Digest(packet)
 		}
 	}
 }

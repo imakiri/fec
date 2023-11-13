@@ -26,6 +26,10 @@ func NewChunk(csn uint64, data []byte) *Chunk {
 	}
 }
 
+func (c *Chunk) Data() []byte {
+	return c.data
+}
+
 func (c *Chunk) Parts() uint64 {
 	return c.Len() / PacketSize
 }
