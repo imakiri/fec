@@ -58,7 +58,7 @@ func encode(enc reedsolomon.Encoder, src io.ReadCloser, dst io.WriteCloser, shar
 		return err
 	}
 
-	var packet Packet
+	var packet *Packet
 	for i := range data {
 		packet = NewPacket(uint32(i), csn, Addr, data[i])
 		var data, _ = packet.Marshal()

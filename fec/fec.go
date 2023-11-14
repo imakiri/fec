@@ -42,7 +42,7 @@ func NewQueue(minPackets, maxPackets, size uint32) (queue *Queue, shutdown func(
 }
 
 func (q *Queue) Digest(packet *Packet) {
-	if packet.csn <= q.csn.lastPopped || q.done {
+	if packet.csn <= q.csn.lastPopped || q.done || packet == nil {
 		return
 	}
 

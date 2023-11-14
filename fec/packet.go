@@ -21,14 +21,14 @@ type Packet struct {
 	hash    [PacketHashSize]byte // 1048...1056
 }
 
-func NewPacket(psn uint32, csn uint64, addr uint64, data []byte) Packet {
-	var p = Packet{
+func NewPacket(psn uint32, csn uint64, addr uint64, data []byte) *Packet {
+	var p = &Packet{
 		version: 2,
 		kind:    1,
 		psn:     psn,
 		csn:     csn,
 		addr:    addr,
-		data:    data,
+		data:    data[:min(len(data), PacketDataSize)],
 	}
 	return p
 }
@@ -56,7 +56,7 @@ func (p *Packet) Unmarshal(data []byte) bool {
 	p.kind = data[1]
 	p.psn = binary.LittleEndian.Uint32(data[4:8])
 	p.csn = binary.LittleEndian.Uint64(data[8:16])
-	p.csn = binary.LittleEndian.Uint64(data[16:24])
+	p.addr = binary.LittleEndian.Uint64(data[16:24])
 	p.data = make([]byte, PacketDataSize)
 	copy(p.data[:], data[PacketHeaderSize:PacketHeaderSize+PacketDataSize])
 	copy(p.hash[:], data[PacketHeaderSize+PacketDataSize:PacketSize])

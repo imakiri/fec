@@ -36,7 +36,6 @@ func Decode(ctx context.Context, src io.ReadCloser, dst io.WriteCloser, data, pa
 	if err != nil {
 		return errors.Wrap(err, "NewQueue")
 	}
-	defer shutdown()
 
 	var decodeErr = make(chan error)
 	var processErr = make(chan error)
