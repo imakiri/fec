@@ -4,13 +4,13 @@ import (
 	"testing"
 )
 
-func Test(t *testing.T) {
+func TestFEC(t *testing.T) {
 	//var ctx = context.Background()
-	//var codec, err = NewCodec()
+	//var rs, err = NewCodec()
 	//assert.NoError(t, err)
 	//
-	//var enc = codec.Encoder(new(uint64), new(uint64))
-	//var dec = codec.Decoder(new(uint64), new(uint64))
+	//var enc = rs.Encoder(new(uint64), new(uint64))
+	//var dec = rs.Decoder(new(uint64), new(uint64))
 	//
 	//const size = 100 * 11680
 	//var data = make([]byte, size)

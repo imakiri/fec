@@ -8,6 +8,8 @@ import (
 const ChunkHeaderSize = 22
 
 type Chunk struct {
+	parts uint64
+
 	version uint8  // 0...1
 	kind    uint8  // 1...2
 	_       uint32 // 2...6
@@ -16,14 +18,23 @@ type Chunk struct {
 	data    []byte
 }
 
-func NewChunk(csn uint64, data []byte) *Chunk {
-	return &Chunk{
+func NewChunk(parts, csn uint64, kind uint8, data []byte) (*Chunk, []byte) {
+	var size = min(uint64(len(data)), parts*PacketDataSize)
+	var chunk = &Chunk{
+		parts: parts,
+
 		version: 1,
-		kind:    1,
+		kind:    kind,
 		csn:     csn,
-		size:    uint64(len(data)),
-		data:    data,
+		size:    size,
+		data:    data[:size],
 	}
+	data = data[size:]
+	// The Good, the Bad and the Ugly
+	if len(data) == 0 {
+		return chunk, nil
+	}
+	return chunk, data
 }
 
 func (c *Chunk) Data() []byte {
@@ -31,38 +42,38 @@ func (c *Chunk) Data() []byte {
 }
 
 func (c *Chunk) Parts() uint64 {
-	return c.Len() / PacketSize
+	return c.parts
 }
 
+// Len returns length of the chunk in bytes. It'll be multiples of PacketDataSize
 func (c *Chunk) Len() uint64 {
-	var chunkSize = ChunkHeaderSize + uint64(len(c.data))
-	var rem = chunkSize % PacketSize
-	if rem == 0 {
-		return chunkSize
-	}
-	return chunkSize + PacketSize - rem
+	return c.parts * PacketDataSize
 }
 
-func (c *Chunk) Marshal(shards int) ([][]byte, bool) {
-	var b = reedsolomon.AllocAligned(shards, PacketDataSize)
+// Marshal accepts total number of parts for allocation purposes. Values less than number of chunk's parts are ignored
+func (c *Chunk) Marshal(total uint64) [][]byte {
+	var dst = reedsolomon.AllocAligned(int(max(total, c.parts)), PacketDataSize)
 	var i uint64 = 0
 
-	b[i] = make([]byte, PacketDataSize)
-	b[i][0] = c.version
-	b[i][1] = c.kind
-	//binary.LittleEndian.PutUint32(b[i][2:6], c.id)
-	binary.LittleEndian.PutUint64(b[i][6:14], c.csn)
-	binary.LittleEndian.PutUint64(b[i][14:22], uint64(len(c.data)))
+	dst[i][0] = c.version
+	dst[i][1] = c.kind
+	//binary.LittleEndian.PutUint32(dst[i][2:6], c.id)
+	binary.LittleEndian.PutUint64(dst[i][6:14], c.csn)
+	binary.LittleEndian.PutUint64(dst[i][14:22], uint64(len(c.data)))
 
-	var copied = ChunkHeaderSize + copy(b[i][ChunkHeaderSize:], c.data)
+	var copied = ChunkHeaderSize + copy(dst[i][ChunkHeaderSize:], c.data)
 	for i = 1; uint64(copied) < c.size; i++ {
-		b[i] = make([]byte, PacketDataSize)
-		copied += copy(b[i], c.data[copied:])
+		copied += copy(dst[i], c.data[copied:])
 	}
-	return b, uint64(copied) == c.size
+	return dst
 }
 
 func (c *Chunk) Unmarshal(data [][]byte) bool {
+	if len(data) < 1 {
+		return false
+	}
+	c.parts = uint64(len(data))
+
 	var i uint64 = 0
 
 	c.version = data[i][0]
@@ -73,7 +84,10 @@ func (c *Chunk) Unmarshal(data [][]byte) bool {
 	c.data = make([]byte, c.size)
 
 	var copied = ChunkHeaderSize + copy(c.data, data[i][ChunkHeaderSize:])
-	for i = 1; i < c.Parts(); i++ {
+	for i = 1; uint64(copied) < c.size; i++ {
+		if i >= c.parts {
+			return false
+		}
 		copied += copy(c.data[copied:], data[i])
 	}
 	return c.size == uint64(copied)

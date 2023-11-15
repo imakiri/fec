@@ -32,9 +32,9 @@ func Decode(ctx context.Context, src io.ReadCloser, dst io.WriteCloser, data, pa
 	dst = unit.NewWriter(dst, size, false, true)
 	var buf = make([]byte, PacketSize)
 
-	queue, shutdown, err := NewQueue(uint32(data), total, 8)
+	queue, shutdown, err := NewPacketQueue(uint32(data), total, 8)
 	if err != nil {
-		return errors.Wrap(err, "NewQueue")
+		return errors.Wrap(err, "NewPacketQueue")
 	}
 
 	var decodeErr = make(chan error)
@@ -96,7 +96,7 @@ func process(ctx context.Context, dataShards, shardsTotal uint32, enc reedsolomo
 	}
 }
 
-func decode(ctx context.Context, src io.ReadCloser, queue *Queue, buf []byte) error {
+func decode(ctx context.Context, src io.ReadCloser, queue *PacketQueue, buf []byte) error {
 	for {
 		select {
 		case <-ctx.Done():

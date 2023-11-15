@@ -1,95 +1,82 @@
 package fec
 
-type Queue struct {
-	size       uint32
-	minPackets uint32
-	maxPackets uint32
+import (
+	"github.com/go-faster/errors"
+	"github.com/klauspost/reedsolomon"
+)
 
-	csn struct {
-		lastPopped uint64
-		lastPushed uint64
-	}
+type Codec struct {
+	rs          reedsolomon.Encoder
+	dataParts   uint64
+	parityParts uint64
+	totalParts  uint64
 
-	lastIndex int
-	// inlined []element
-	order  []uint32
-	csns   []uint64
-	chunks [][]*Packet
-
-	done         bool
-	processQueue chan []*Packet
+	csn uint64
 }
 
-func NewQueue(minPackets, maxPackets, size uint32) (queue *Queue, shutdown func(), err error) {
-	queue = new(Queue)
-	queue.size = size
-	queue.minPackets = minPackets
-	queue.maxPackets = maxPackets
-	queue.order = make([]uint32, size)
-	queue.csns = make([]uint64, size)
-	queue.chunks = make([][]*Packet, size)
-	queue.processQueue = make(chan []*Packet, size)
-	queue.done = false
-	for i := range queue.chunks {
-		queue.chunks[i] = make([]*Packet, maxPackets)
+func NewCodec(dataParts, parityParts uint64) (codec *Codec, err error) {
+	codec = new(Codec)
+	codec.rs, err = reedsolomon.New(int(dataParts), int(parityParts))
+	if err != nil {
+		return nil, errors.Wrap(err, "reedsolomon.New")
 	}
-	shutdown = func() {
-		queue.done = true
-		close(queue.processQueue)
-	}
-
-	return queue, shutdown, nil
+	codec.dataParts = dataParts
+	codec.parityParts = parityParts
+	codec.totalParts = dataParts + parityParts
+	return codec, nil
 }
 
-func (q *Queue) Digest(packet *Packet) {
-	if packet.csn <= q.csn.lastPopped || q.done || packet == nil {
-		return
-	}
-
-	if packet.csn > q.csn.lastPushed {
-		// pushing new chunk
-		for i := uint32(0); i < q.size; i++ {
-			if q.order[i] == 0 {
-				q.csn.lastPopped = q.csns[i]
-				// dropping the oldest chunk and replacing it with a new one, containing single packet
-				q.order[i] = q.size - 1
-				q.csns[i] = packet.csn
-				q.chunks[i] = q.chunks[i][0:1]
-				// pushing new packet
-				q.chunks[i][0] = packet
-			} else {
-				// due to the push we shift the order of all other packets by -1
-				q.order[i]--
-			}
-		}
-		q.csn.lastPushed = packet.csn
-		return
-	}
-
-	var index uint32
-	for i := uint32(0); i < q.size; i++ {
-		// looking for an index related to the incoming packet at which its chunk is stored
-		if q.csns[i] == packet.csn {
-			q.chunks[i] = append(q.chunks[i], packet)
-			if uint32(len(q.chunks[i])) == q.minPackets {
-				index = i
-				break // breaking the loop when we found a complete chunk
-			}
-			return
-		}
-	}
-
-	q.processQueue <- q.chunks[index]
-
-	for i := uint32(0); i < q.size; i++ {
-		if i == index || q.order[i] > q.order[index] || q.csns[i] == 0 {
-			continue
-		}
-		q.order[i]++
-	}
-
-	q.csns[index] = 0
-	q.order[index] = 0
-	q.chunks[index] = q.chunks[index][0:0]
-	q.csn.lastPopped = packet.csn
+func (c *Codec) PartsData() uint64 {
+	return c.dataParts
 }
+
+func (c *Codec) PartsParity() uint64 {
+	return c.dataParts
+}
+
+func (c *Codec) TotalParts() uint64 {
+	return c.totalParts
+}
+
+func (c *Codec) MaxSize() uint64 {
+	return PacketDataSize * c.totalParts
+}
+
+//func (c *Codec) Encode(data []byte, dst chan *Packet) error {
+//	var chunk, err = NewChunk(c.dataParts, c.csn, 1, data)
+//	if err != nil {
+//		return err
+//	}
+//
+//	var result = reedsolomon.AllocAligned(int(c.totalParts), PacketDataSize)
+//	if !chunk.Marshal(result) {
+//		return errors.New("!chunk.Marshal(result)")
+//	}
+//
+//	err = c.rs.Encode(result)
+//	if err != nil {
+//		return errors.Wrap(err, "c.rs.Encode(result)")
+//	}
+//
+//	return result, nil
+//}
+
+// Decode reconstruct data from
+//func (c *Codec) Decode(data [][]byte) ([]byte, error) {
+//	var parts = uint64(len(data))
+//	if parts > c.totalParts {
+//		return nil, errors.New("too many parts")
+//	}
+//	if parts < c.dataParts {
+//		return nil, errors.New("not enough parts")
+//	}
+//
+//	var err = c.rs.ReconstructData(data)
+//	if err != nil {
+//		return nil, errors.Wrap(err, "c.rs.ReconstructData(data)")
+//	}
+//
+//	var chunk = new(Chunk)
+//	chunk.Unmarshal(data[:c.dataParts])
+//	return data[:c.dataParts], nil
+//}
