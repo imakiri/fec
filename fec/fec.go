@@ -27,6 +27,7 @@ func NewCodec(dataParts, parityParts uint64) (codec *Codec, err error) {
 }
 
 func (c *Codec) PartsData() uint64 {
+	c.rs.Encode()
 	return c.dataParts
 }
 

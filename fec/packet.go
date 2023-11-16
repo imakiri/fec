@@ -44,7 +44,7 @@ func hash(data []byte) [PacketHashSize]byte {
 	return [8]byte{h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]}
 }
 
-func (p *Packet) Marshal() ([]byte, bool) {
+func (p *Packet) Marshal() []byte {
 	var b = make([]byte, PacketSize)
 	b[0] = p.version
 	b[1] = p.kind
@@ -54,7 +54,7 @@ func (p *Packet) Marshal() ([]byte, bool) {
 	copy(b[PacketHeaderSize:PacketHeaderSize+PacketDataSize], p.data[:])
 	var h = hash(b[:])
 	copy(b[PacketHeaderSize+PacketDataSize:PacketSize], h[:])
-	return b, p.hash == h
+	return b
 }
 
 func (p *Packet) Unmarshal(data []byte) bool {

@@ -37,8 +37,11 @@ func NewChunk(parts, csn uint64, kind uint8, data []byte) (*Chunk, []byte) {
 	return chunk, data
 }
 
+// Data returns copy of internal data field
 func (c *Chunk) Data() []byte {
-	return c.data
+	var data = make([]byte, c.size)
+	copy(data, c.data)
+	return data
 }
 
 func (c *Chunk) Parts() uint64 {
