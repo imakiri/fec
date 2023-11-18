@@ -44,6 +44,13 @@ func hash(data []byte) [PacketHashSize]byte {
 	return [8]byte{h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]}
 }
 
+func (p *Packet) Data() []byte {
+	if p == nil {
+		return nil
+	}
+	return p.data
+}
+
 func (p *Packet) Marshal() []byte {
 	var b = make([]byte, PacketSize)
 	b[0] = p.version
@@ -52,7 +59,7 @@ func (p *Packet) Marshal() []byte {
 	binary.LittleEndian.PutUint64(b[8:16], p.csn)
 	binary.LittleEndian.PutUint64(b[16:24], p.addr)
 	copy(b[PacketHeaderSize:PacketHeaderSize+PacketDataSize], p.data[:])
-	var h = hash(b[:])
+	var h = hash(b[:PacketHeaderSize+PacketDataSize])
 	copy(b[PacketHeaderSize+PacketDataSize:PacketSize], h[:])
 	return b
 }

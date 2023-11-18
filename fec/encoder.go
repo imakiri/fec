@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"github.com/go-faster/errors"
 	"github.com/klauspost/reedsolomon"
-	"io"
+	"log"
 )
-
-const Addr = 1
 
 type Encoder struct {
 	rs    reedsolomon.Encoder
@@ -16,7 +14,8 @@ type Encoder struct {
 	data  uint64
 	csn   uint64
 
-	resultQueue chan []byte
+	argumentQueue chan []byte
+	resultQueue   chan []byte
 }
 
 func NewEncoder(dataParts, totalParts uint64) (*Encoder, error) {
@@ -30,9 +29,8 @@ func NewEncoder(dataParts, totalParts uint64) (*Encoder, error) {
 	var encoder = new(Encoder)
 	encoder.total = totalParts
 	encoder.data = dataParts
-	encoder.resultQueue = make(chan []byte, 8*totalParts)
-	var err error
 
+	var err error
 	encoder.rs, err = reedsolomon.New(int(dataParts), int(totalParts)-int(dataParts))
 	if err != nil {
 		return nil, err
@@ -41,44 +39,63 @@ func NewEncoder(dataParts, totalParts uint64) (*Encoder, error) {
 	return encoder, nil
 }
 
-func (e *Encoder) encode(ctx context.Context, src io.Reader) {
-	e.csn = 1
-	defer func() { e.csn = 0 }()
-	var size = PacketDataSize*e.data - ChunkHeaderSize
-	var buf = make([]byte, size)
+func (encoder *Encoder) close(ctx context.Context) {
+	<-ctx.Done()
+	close(encoder.argumentQueue)
+	close(encoder.resultQueue)
+}
+
+func (encoder *Encoder) IncomingSize() uint64 {
+	return PacketDataSize*encoder.data - ChunkHeaderSize
+}
+
+func (encoder *Encoder) OutgoingSize() uint64 {
+	return PacketSize
+}
+
+func (encoder *Encoder) encode(ctx context.Context) {
+	encoder.csn = 1
+	defer func() { encoder.csn = 0 }()
+	var err error
+	var data []byte
+	var packet *Packet
 encode:
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			var n, err = src.Read(buf)
+		case data = <-encoder.argumentQueue:
+			var chunk, rem = NewChunk(encoder.data, encoder.csn, KindData, data)
+			if rem != nil {
+				log.Printf("encode: NewChunk: res is not nil: len %d", len(rem))
+				continue
+			}
+			var data = chunk.Marshal(encoder.total)
+
+			err = encoder.rs.Encode(data)
 			if err != nil {
-				fmt.Println(errors.Wrap(err, "src.Read(buf)"))
+				fmt.Println(errors.Wrap(err, "encode: rs.Encode"))
 				continue encode
 			}
 
-			var chunk, _ = NewChunk(e.data, e.csn, 1, buf[:n])
-			var data = chunk.Marshal(e.total)
-
-			err = e.rs.Encode(data)
-			if err != nil {
-				fmt.Println(errors.Wrap(err, "e.rs.Encode(data)"))
-				continue encode
-			}
-
-			e.csn++
 			for i := range data {
-				e.resultQueue <- data[i]
+				packet, rem = NewPacket(uint32(i), encoder.csn, AddrFec, data[i])
+				if rem != nil {
+					log.Printf("encode: NewPacket: res is not nil: len %d", len(rem))
+					continue
+				}
+				encoder.resultQueue <- packet.Marshal()
 			}
+			encoder.csn++
 		}
 	}
 }
 
-func (e *Encoder) Encode(ctx context.Context, src io.Reader) (chan []byte, error) {
-	if src == nil {
-		return nil, errors.New("src is nil")
-	}
-	go e.encode(ctx, src)
-	return e.resultQueue, nil
+func (encoder *Encoder) Encode(ctx context.Context) (in, out chan []byte, err error) {
+	encoder.resultQueue = make(chan []byte, 8*encoder.data)
+	encoder.argumentQueue = make(chan []byte, 8*encoder.data)
+
+	go encoder.encode(ctx)
+	go encoder.close(ctx)
+	return encoder.argumentQueue, encoder.resultQueue, nil
 }

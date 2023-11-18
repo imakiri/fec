@@ -1,39 +1,101 @@
 package fec
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"github.com/stretchr/testify/assert"
+	"os"
+	"os/signal"
+	"sync"
 	"testing"
 )
 
 func TestFEC(t *testing.T) {
-	//var ctx = context.Background()
-	//var rs, err = NewCodec()
-	//assert.NoError(t, err)
-	//
-	//var enc = rs.Encoder(new(uint64), new(uint64))
-	//var dec = rs.Decoder(new(uint64), new(uint64))
-	//
-	//const size = 100 * 11680
-	//var data = make([]byte, size)
-	//n, _ := rand.Read(data)
-	//assert.Equal(t, len(data), n)
-	//var senderBuf = bytes.NewBuffer(data)
-	//var receiverBuf = bytes.NewBuffer(make([]byte, 0, size))
-	//
-	//Encode(ctx, io.NopCloser(senderBuf), io.NopCloser(), 8, 8)
-	//
-	//var ctx = context.Background()
-	//var buf = bytes.NewBuffer(nil)
-	//
-	//err = enc.Encode(ctx, senderBuf, buf)
-	//assert.True(t, errors.Is(err, io.EOF))
-	//t.Log("buf len ", buf.Len())
-	//
-	//err = dec.Decode(ctx, buf, receiverBuf)
-	//t.Log("receiver buf len ", receiverBuf.Len())
-	//
-	//assert.True(t, errors.Is(err, io.EOF))
-	//
-	//for i := range data {
-	//	assert.Equal(t, data[i], receiverBuf.Bytes()[i])
-	//}
+	const dataParts = 8
+	const totalParts = 12
+	var err error
+	var ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	defer cancel()
+
+	var expecting = bytes.NewBuffer(nil)
+	var got = bytes.NewBuffer(nil)
+
+	var encoder *Encoder
+	var decoder *Decoder
+
+	encoder, err = NewEncoder(dataParts, totalParts)
+	assert.NoError(t, err)
+
+	decoder, err = NewDecoder(dataParts, totalParts, 8, 8)
+	assert.NoError(t, err)
+
+	encoderIn, encoderOut, err := encoder.Encode(ctx)
+	assert.NoError(t, err)
+	assert.NotNil(t, encoderIn)
+	assert.NotNil(t, encoderOut)
+
+	decoderIn, decoderOut, err := decoder.Decode(ctx)
+	assert.NoError(t, err)
+	assert.NotNil(t, decoderIn)
+	assert.NotNil(t, decoderOut)
+
+	var wg = new(sync.WaitGroup)
+	const chunks = 2
+	wg.Add(1)
+	go func() {
+		var size = encoder.IncomingSize()
+		var buf = make([]byte, size)
+		for i := 0; i < chunks; i++ {
+			n, _ := rand.Read(buf)
+			assert.EqualValues(t, size, n)
+			n, err := expecting.Write(buf)
+			assert.NoError(t, err)
+			assert.EqualValues(t, size, n)
+			encoderIn <- buf
+		}
+	}()
+
+	go func() {
+		var data []byte
+		var packet *Packet
+		var ok bool
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data = <-encoderOut:
+				// no packet loss for now
+				packet = new(Packet)
+				ok = packet.Unmarshal(data)
+				assert.True(t, ok)
+				//t.Log(packet)
+				select {
+				case decoderIn <- data:
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		var data []byte
+		for i := 0; i < chunks; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			case data = <-decoderOut:
+				var n, err = got.Write(data)
+				assert.NoError(t, err)
+				assert.EqualValues(t, len(data), n)
+			}
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
+	assert.EqualValues(t, expecting.Len(), got.Len())
+	assert.EqualValues(t, expecting.Bytes(), got.Bytes())
 }

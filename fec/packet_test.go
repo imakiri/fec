@@ -27,7 +27,8 @@ func TestPacket(t *testing.T) {
 	packet = new(Packet)
 	assert.EqualValues(t, 0, packet.csn)
 
-	packet.Unmarshal(raw)
+	var ok = packet.Unmarshal(raw)
+	assert.True(t, ok)
 	assert.EqualValues(t, psn, packet.psn)
 	assert.EqualValues(t, csn, packet.csn)
 	assert.EqualValues(t, addr, packet.addr)

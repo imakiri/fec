@@ -40,7 +40,7 @@ func assertPackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint6
 
 func casePacket(csn, psn uint64, expect map[uint64]map[uint64][]byte) *Packet {
 	var data = []byte(fmt.Sprintf("%d.%d", csn, psn))
-	var packet, _ = NewPacket(uint32(psn), csn, 1, data)
+	var packet, _ = NewPacket(uint32(psn), csn, KindData, data)
 	if expect[csn] == nil {
 		expect[csn] = make(map[uint64][]byte)
 	}
@@ -54,6 +54,9 @@ func TestAssembler(t *testing.T) {
 
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
+
+	decoder.restoreQueue = make(chan []*Packet, 4)
+	decoder.assemblyQueue = make(chan *Packet, 8)
 	go decoder.assembly(ctx)
 
 	var packets []*Packet
@@ -102,24 +105,27 @@ func TestDispatcher(t *testing.T) {
 
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
+
+	decoder.resultQueue = make(chan []byte, 8)
+	decoder.dispatchQueue = make(chan *Chunk, 4)
 	go decoder.dispatch(ctx)
 
 	var chunk *Chunk
 	var data []byte
 
-	chunk, _ = NewChunk(8, 1, 1, []byte(strconv.Itoa(0)))
+	chunk, _ = NewChunk(8, 1, KindData, []byte(strconv.Itoa(0)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 2, 1, []byte(strconv.Itoa(1)))
+	chunk, _ = NewChunk(8, 2, KindData, []byte(strconv.Itoa(1)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 3, 1, []byte(strconv.Itoa(2)))
+	chunk, _ = NewChunk(8, 3, KindData, []byte(strconv.Itoa(2)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 4, 1, []byte(strconv.Itoa(3)))
+	chunk, _ = NewChunk(8, 4, KindData, []byte(strconv.Itoa(3)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 5, 1, []byte(strconv.Itoa(4)))
+	chunk, _ = NewChunk(8, 5, KindData, []byte(strconv.Itoa(4)))
 	decoder.dispatchQueue <- chunk
 
 	data = <-decoder.resultQueue
@@ -139,19 +145,19 @@ func TestDispatcher(t *testing.T) {
 
 	//
 
-	chunk, _ = NewChunk(8, 6, 1, []byte(strconv.Itoa(5)))
+	chunk, _ = NewChunk(8, 6, KindData, []byte(strconv.Itoa(5)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 8, 1, []byte(strconv.Itoa(7)))
+	chunk, _ = NewChunk(8, 8, KindData, []byte(strconv.Itoa(7)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 10, 1, []byte(strconv.Itoa(9)))
+	chunk, _ = NewChunk(8, 10, KindData, []byte(strconv.Itoa(9)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 7, 1, []byte(strconv.Itoa(6)))
+	chunk, _ = NewChunk(8, 7, KindData, []byte(strconv.Itoa(6)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 9, 1, []byte(strconv.Itoa(8)))
+	chunk, _ = NewChunk(8, 9, KindData, []byte(strconv.Itoa(8)))
 	decoder.dispatchQueue <- chunk
 
 	data = <-decoder.resultQueue
@@ -171,22 +177,22 @@ func TestDispatcher(t *testing.T) {
 
 	//
 
-	chunk, _ = NewChunk(8, 12, 1, []byte(strconv.Itoa(11)))
+	chunk, _ = NewChunk(8, 12, KindData, []byte(strconv.Itoa(11)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 13, 1, []byte(strconv.Itoa(12)))
+	chunk, _ = NewChunk(8, 13, KindData, []byte(strconv.Itoa(12)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 14, 1, []byte(strconv.Itoa(13)))
+	chunk, _ = NewChunk(8, 14, KindData, []byte(strconv.Itoa(13)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 15, 1, []byte(strconv.Itoa(14)))
+	chunk, _ = NewChunk(8, 15, KindData, []byte(strconv.Itoa(14)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 16, 1, []byte(strconv.Itoa(15)))
+	chunk, _ = NewChunk(8, 16, KindData, []byte(strconv.Itoa(15)))
 	decoder.dispatchQueue <- chunk
 
-	chunk, _ = NewChunk(8, 11, 1, []byte(strconv.Itoa(10)))
+	chunk, _ = NewChunk(8, 11, KindData, []byte(strconv.Itoa(10)))
 	decoder.dispatchQueue <- chunk
 
 	data = <-decoder.resultQueue

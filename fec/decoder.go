@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/go-faster/errors"
 	"github.com/klauspost/reedsolomon"
-	"io"
 	"log"
 )
 
@@ -13,6 +12,7 @@ type Decoder struct {
 		size    uint64
 		lines   uint64
 		last    uint64
+		lastOk  bool
 		csn     []uint64
 		found   []uint64
 		packets []*Packet
@@ -30,6 +30,7 @@ type Decoder struct {
 		chunks   []*Chunk
 	}
 
+	argumentQueue chan []byte
 	assemblyQueue chan *Packet
 	restoreQueue  chan []*Packet
 	dispatchQueue chan *Chunk
@@ -62,11 +63,6 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	decoder.assembler.csn = make([]uint64, assemblerLines)
 	decoder.assembler.packets = make([]*Packet, assemblerLines*totalParts)
 
-	decoder.dispatchQueue = make(chan *Chunk, 4)
-	decoder.restoreQueue = make(chan []*Packet, 4)
-	decoder.assemblyQueue = make(chan *Packet, 8)
-	decoder.resultQueue = make(chan []byte, 8)
-
 	return decoder, nil
 }
 
@@ -79,17 +75,17 @@ dispatch:
 			return
 		case chunk = <-decoder.dispatchQueue:
 			if chunk == nil {
-				log.Println("dropping invalid chunk: nil chunk")
+				log.Println("dispatch: dropping invalid chunk: nil chunk")
 				continue dispatch
 			}
 
 			if chunk.csn == 0 {
-				log.Println("dropping invalid chunk: csn == 0")
+				log.Println("dispatch: dropping invalid chunk: csn == 0")
 				continue dispatch
 			}
 
 			if chunk.csn <= decoder.dispatcher.last {
-				log.Println("detached chunk: csn:", chunk.csn)
+				log.Printf("dispatch: detached chunk: csn: %d", chunk.csn)
 				continue dispatch
 			}
 
@@ -98,7 +94,7 @@ dispatch:
 			if chunk.csn != decoder.dispatcher.awaiting {
 				var at = chunk.csn % uint64(decoder.dispatcher.size)
 				if decoder.dispatcher.chunks[at] != nil {
-					log.Println("lost: csn:", decoder.dispatcher.awaiting)
+					log.Printf("dispatch: lost: csn: %d", decoder.dispatcher.awaiting)
 					decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
 					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 					decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
@@ -120,7 +116,7 @@ dispatch:
 			}
 
 			for i := decoder.dispatcher.last; i < decoder.dispatcher.first; i++ {
-				var at = (i + 1) % uint64(decoder.dispatcher.size)
+				var at = (i + 1) % decoder.dispatcher.size
 				if decoder.dispatcher.chunks[at] == nil {
 					continue dispatch
 				}
@@ -150,25 +146,19 @@ restore:
 			return
 		case packets = <-decoder.restoreQueue:
 			for i := range data {
-				data[i] = nil
-			}
-			for i := range data {
-				if uint64(packets[i].psn) > decoder.restorer.total {
-					log.Println("dropping invalid packet: invalid psn: ", packets[i].psn)
-					continue restore
-				}
-				data[packets[i].psn] = packets[i].data
+				data[i] = packets[i].Data()
 			}
 
 			err = decoder.restorer.rs.ReconstructData(data)
 			if err != nil {
-				log.Println(errors.Wrap(err, "ReconstructData(data)"))
+				log.Printf("restore: rs.ReconstructData(data): err %v", err)
 				continue restore
 			}
 
+			chunk = new(Chunk)
 			ok = chunk.Unmarshal(data[:decoder.restorer.data])
 			if !ok {
-				log.Println("dropping invalid packet: chunk.Unmarshal: not ok")
+				log.Println("restore: dropping invalid packet: chunk.Unmarshal: not ok")
 				continue restore
 			}
 
@@ -186,17 +176,19 @@ assembly:
 			return
 		case packet = <-decoder.assemblyQueue:
 			if packet == nil {
-				log.Println("dropping invalid packet: packet is nil")
+				log.Println("assembly: dropping invalid packet: packet is nil")
 				continue assembly
 			}
 
 			if packet.csn == 0 {
-				log.Println("dropping invalid packet: csn == 0")
+				log.Println("assembly: dropping invalid packet: csn == 0")
 				continue assembly
 			}
 
 			if packet.csn <= decoder.assembler.last {
-				log.Println("detached packet: csn:", packet.csn, "psn:", packet.psn)
+				if !decoder.assembler.lastOk {
+					log.Printf("assembly: last csn: %d, detached packet: csn: %d, psn: %d", decoder.assembler.last, packet.csn, packet.psn)
+				}
 				continue assembly
 			}
 
@@ -205,7 +197,7 @@ assembly:
 			// happy path: pushing into existing chunk line
 			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] == packet.csn {
 				if uint64(packet.psn) > decoder.restorer.total {
-					log.Println("invalid psn:", packet.psn)
+					log.Printf("assembly: invalid psn: %d", packet.psn)
 					continue assembly
 				}
 				decoder.assembler.packets[atPacket] = packet
@@ -221,7 +213,8 @@ assembly:
 					copy(data, decoder.assembler.packets[chunkStart:chunkEnd])
 					decoder.restoreQueue <- data
 					decoder.assembler.last = packet.csn
-					for at := chunkStart; chunkStart < chunkEnd; chunkStart++ {
+					decoder.assembler.lastOk = true
+					for at := chunkStart; at < chunkEnd; at++ {
 						decoder.assembler.packets[at] = nil
 					}
 					decoder.assembler.found[atChunk] = 0
@@ -242,12 +235,16 @@ assembly:
 			}
 
 			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] != packet.csn {
-				log.Println("dropping outdated chunk: csn:", decoder.assembler.csn[atChunk])
+				decoder.assembler.last = decoder.assembler.csn[atChunk]
+				decoder.assembler.lastOk = false
+				log.Printf("assembly: dropping outdated chunk: csn: %d", decoder.assembler.csn[atChunk])
+
 				var chunkStart = packet.csn * decoder.restorer.total % decoder.assembler.size
 				var chunkEnd = (packet.csn*decoder.restorer.total + decoder.restorer.total) % decoder.assembler.size
 				for at := chunkStart; at < chunkEnd; at++ {
 					decoder.assembler.packets[at] = nil
 				}
+
 				decoder.assembler.packets[atPacket] = packet
 				decoder.assembler.csn[atChunk] = packet.csn
 				decoder.assembler.found[atChunk] = 1
@@ -260,10 +257,9 @@ assembly:
 	}
 }
 
-func (decoder *Decoder) decode(ctx context.Context, src io.Reader) {
+func (decoder *Decoder) decode(ctx context.Context) {
 	var n int
-	var err error
-	var data = make([]byte, PacketSize)
+	var data []byte
 	var packet *Packet
 	var ok bool
 decode:
@@ -271,21 +267,21 @@ decode:
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			n, err = src.Read(data)
-			if err != nil {
-				log.Println(errors.Wrap(err, "invalid read"))
-				continue decode
-			}
-			if n != PacketSize {
-				log.Println("invalid read: read only ", n, " bytes")
+		case data = <-decoder.argumentQueue:
+			if len(data) != PacketSize {
+				log.Printf("decode: invalid data: %d bytes", n)
 				continue decode
 			}
 
 			packet = new(Packet)
 			ok = packet.Unmarshal(data)
 			if !ok {
-				log.Println("packet.Unmarshal(data) is not ok")
+				log.Println("decode: packet.Unmarshal is not ok")
+				continue decode
+			}
+
+			if packet.addr != AddrFec {
+				log.Printf("decode: packet: invalid addr: %d", packet.addr)
 				continue decode
 			}
 
@@ -294,13 +290,33 @@ decode:
 	}
 }
 
-func (decoder *Decoder) Decode(ctx context.Context, src io.Reader) (chan []byte, error) {
-	if src == nil {
-		return nil, errors.New("src is nil")
-	}
+func (decoder *Decoder) close(ctx context.Context) {
+	<-ctx.Done()
+	close(decoder.argumentQueue)
+	close(decoder.assemblyQueue)
+	close(decoder.restoreQueue)
+	close(decoder.resultQueue)
+}
+
+func (decoder *Decoder) IncomingSize() uint64 {
+	return PacketSize
+}
+
+func (decoder *Decoder) OutgoingSize() uint64 {
+	return PacketDataSize*decoder.restorer.data - ChunkHeaderSize
+}
+
+func (decoder *Decoder) Decode(ctx context.Context) (in, out chan []byte, err error) {
+	decoder.resultQueue = make(chan []byte, 8)
+	decoder.dispatchQueue = make(chan *Chunk, 4)
+	decoder.restoreQueue = make(chan []*Packet, 4)
+	decoder.assemblyQueue = make(chan *Packet, 8)
+	decoder.argumentQueue = make(chan []byte, 8*decoder.restorer.data)
+
 	go decoder.dispatch(ctx)
 	go decoder.restore(ctx)
 	go decoder.assembly(ctx)
-	go decoder.decode(ctx, src)
-	return decoder.resultQueue, nil
+	go decoder.decode(ctx)
+	go decoder.close(ctx)
+	return decoder.argumentQueue, decoder.resultQueue, nil
 }
