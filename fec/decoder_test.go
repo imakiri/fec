@@ -122,19 +122,19 @@ func TestDispatcher(t *testing.T) {
 	chunk, _ = NewChunk(8, 5, 1, []byte(strconv.Itoa(4)))
 	decoder.dispatchQueue <- chunk
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(0)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(1)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(2)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(3)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(4)), data)
 
 	//
@@ -154,19 +154,19 @@ func TestDispatcher(t *testing.T) {
 	chunk, _ = NewChunk(8, 9, 1, []byte(strconv.Itoa(8)))
 	decoder.dispatchQueue <- chunk
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(5)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(6)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(7)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(8)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(9)), data)
 
 	//
@@ -189,18 +189,18 @@ func TestDispatcher(t *testing.T) {
 	chunk, _ = NewChunk(8, 11, 1, []byte(strconv.Itoa(10)))
 	decoder.dispatchQueue <- chunk
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(11)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(12)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(13)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(14)), data)
 
-	data = <-decoder.returnQueue
+	data = <-decoder.resultQueue
 	assert.EqualValues(t, []byte(strconv.Itoa(15)), data)
 }

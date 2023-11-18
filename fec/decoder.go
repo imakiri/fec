@@ -10,11 +10,9 @@ import (
 
 type Decoder struct {
 	assembler struct {
-		size  uint64
-		lines uint64
-		last  uint64
-		first uint64
-		// inlined []element
+		size    uint64
+		lines   uint64
+		last    uint64
 		csn     []uint64
 		found   []uint64
 		packets []*Packet
@@ -35,7 +33,7 @@ type Decoder struct {
 	assemblyQueue chan *Packet
 	restoreQueue  chan []*Packet
 	dispatchQueue chan *Chunk
-	returnQueue   chan []byte
+	resultQueue   chan []byte
 }
 
 func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (decoder *Decoder, err error) {
@@ -67,7 +65,7 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	decoder.dispatchQueue = make(chan *Chunk, 4)
 	decoder.restoreQueue = make(chan []*Packet, 4)
 	decoder.assemblyQueue = make(chan *Packet, 8)
-	decoder.returnQueue = make(chan []byte, 8)
+	decoder.resultQueue = make(chan []byte, 8)
 
 	return decoder, nil
 }
@@ -101,7 +99,7 @@ dispatch:
 				var at = chunk.csn % uint64(decoder.dispatcher.size)
 				if decoder.dispatcher.chunks[at] != nil {
 					log.Println("lost: csn:", decoder.dispatcher.awaiting)
-					decoder.returnQueue <- decoder.dispatcher.chunks[at].Data()
+					decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
 					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 					decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
 
@@ -111,7 +109,7 @@ dispatch:
 					continue dispatch
 				}
 			} else {
-				decoder.returnQueue <- chunk.Data()
+				decoder.resultQueue <- chunk.Data()
 				decoder.dispatcher.last = chunk.csn
 				decoder.dispatcher.awaiting++
 			}
@@ -130,7 +128,7 @@ dispatch:
 					continue dispatch
 				}
 
-				decoder.returnQueue <- decoder.dispatcher.chunks[at].Data()
+				decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
 				decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 				decoder.dispatcher.awaiting++
 				decoder.dispatcher.chunks[at] = nil
@@ -201,8 +199,6 @@ assembly:
 				log.Println("detached packet: csn:", packet.csn, "psn:", packet.psn)
 				continue assembly
 			}
-
-			decoder.assembler.first = max(decoder.assembler.first, packet.csn)
 
 			var atPacket = (packet.csn*decoder.restorer.total + uint64(packet.psn)) % decoder.assembler.size
 			var atChunk = packet.csn % decoder.assembler.lines
@@ -298,14 +294,13 @@ decode:
 	}
 }
 
-func (decoder *Decoder) Decode(ctx context.Context, src io.Reader) (cancel func()) {
+func (decoder *Decoder) Decode(ctx context.Context, src io.Reader) (chan []byte, error) {
 	if src == nil {
-		return func() {}
+		return nil, errors.New("src is nil")
 	}
-	ctx, cancel = context.WithCancel(ctx)
 	go decoder.dispatch(ctx)
 	go decoder.restore(ctx)
 	go decoder.assembly(ctx)
 	go decoder.decode(ctx, src)
-	return cancel
+	return decoder.resultQueue, nil
 }
