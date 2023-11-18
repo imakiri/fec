@@ -10,10 +10,10 @@ import (
 
 type Decoder struct {
 	assembler struct {
-		size       uint32
-		lastPopped uint64
-		lastPushed uint64
-		lastIndex  int
+		size      uint32
+		last      uint64
+		first     uint64
+		lastIndex int
 		// inlined []element
 		order  []uint32
 		csns   []uint64
@@ -26,7 +26,6 @@ type Decoder struct {
 	}
 	dispatcher struct {
 		size     uint32
-		len      uint32
 		first    uint64
 		last     uint64
 		awaiting uint64
@@ -40,26 +39,32 @@ type Decoder struct {
 	returnQueue   chan []byte
 }
 
-func NewDigester(dataParts, totalParts, size uint32) (queue *Decoder, shutdown func(), err error) {
-	queue = new(Decoder)
-	queue.size = size
-	queue.restorer.data = dataParts
-	queue.restorer.total = totalParts
-	queue.assembler.order = make([]uint32, size)
-	queue.assembler.csns = make([]uint64, size)
-	queue.assembler.chunks = make([][]*Packet, size)
+func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint32) (decoder *Decoder, err error) {
+	decoder = new(Decoder)
+	decoder.dispatcher.size = dispatcherSize
+	decoder.dispatcher.chunks = make([]*Chunk, dispatcherSize)
+	decoder.dispatcher.csn = make([]uint64, dispatcherSize)
 
-	queue.dispatchQueue = make(chan *Chunk, size)
-	queue.restoreQueue = make(chan []*Packet, size)
-	queue.assemblyQueue = make(chan *Packet, size)
-	for i := range queue.assembler.chunks {
-		queue.assembler.chunks[i] = make([]*Packet, totalParts)
+	decoder.restorer.rs, err = reedsolomon.New(int(dataParts), int(totalParts)-int(dataParts))
+	if err != nil {
+		return nil, err
 	}
-	shutdown = func() {
-		close(queue.dispatchQueue)
+	decoder.restorer.data = dataParts
+	decoder.restorer.total = totalParts
+
+	decoder.assembler.order = make([]uint32, assemblerLines)
+	decoder.assembler.csns = make([]uint64, assemblerLines)
+	decoder.assembler.chunks = make([][]*Packet, assemblerLines)
+	for i := range decoder.assembler.chunks {
+		decoder.assembler.chunks[i] = make([]*Packet, totalParts)
 	}
 
-	return queue, shutdown, nil
+	decoder.dispatchQueue = make(chan *Chunk, 4)
+	decoder.restoreQueue = make(chan []*Packet, 4)
+	decoder.assemblyQueue = make(chan *Packet, 8)
+	decoder.returnQueue = make(chan []byte, 8)
+
+	return decoder, nil
 }
 
 func (decoder *Decoder) dispatch(ctx context.Context) {
@@ -75,20 +80,53 @@ dispatch:
 				continue dispatch
 			}
 
-			if chunk.csn != decoder.dispatcher.awaiting {
-				// if there is still space left for new chunks
-				if decoder.dispatcher.len < decoder.dispatcher.size {
-					decoder.dispatcher.chunks[decoder.dispatcher.len] = chunk
-					decoder.dispatcher.csn[decoder.dispatcher.len] = chunk.csn
-					decoder.dispatcher.len++
-				} else {
-
-				}
+			if chunk.csn <= decoder.dispatcher.last && chunk.csn != 0 {
+				log.Println("detached: csn: ", chunk.csn)
 				continue dispatch
 			}
 
-			decoder.returnQueue <- chunk.Data()
+			decoder.dispatcher.first = max(decoder.dispatcher.first, chunk.csn)
 
+			if chunk.csn != decoder.dispatcher.awaiting {
+				var at = chunk.csn % uint64(decoder.dispatcher.size)
+				if decoder.dispatcher.chunks[at] != nil {
+					log.Println("lost: csn: ", decoder.dispatcher.awaiting)
+					decoder.returnQueue <- decoder.dispatcher.chunks[at].Data()
+					decoder.dispatcher.last = decoder.dispatcher.csn[at]
+					decoder.dispatcher.awaiting = decoder.dispatcher.csn[at] + 1
+
+					decoder.dispatcher.csn[at] = chunk.csn
+					decoder.dispatcher.chunks[at] = chunk
+				} else {
+					decoder.dispatcher.csn[at] = chunk.csn
+					decoder.dispatcher.chunks[at] = chunk
+					continue dispatch
+				}
+			} else {
+				decoder.returnQueue <- chunk.Data()
+				decoder.dispatcher.last = chunk.csn
+				decoder.dispatcher.awaiting++
+			}
+
+			var length = decoder.dispatcher.first - decoder.dispatcher.last
+			if length == 0 {
+				continue dispatch
+			}
+
+			for i := decoder.dispatcher.last; i < decoder.dispatcher.first; i++ {
+				var at = (i + 1) % uint64(decoder.dispatcher.size)
+				if decoder.dispatcher.chunks[at] == nil {
+					continue dispatch
+				}
+				if decoder.dispatcher.csn[at] != decoder.dispatcher.awaiting {
+					continue dispatch
+				}
+
+				decoder.returnQueue <- decoder.dispatcher.chunks[at].Data()
+				decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
+				decoder.dispatcher.awaiting++
+				decoder.dispatcher.chunks[at] = nil
+			}
 		}
 	}
 }
@@ -146,17 +184,17 @@ assembly:
 				continue assembly
 			}
 
-			if packet.csn <= decoder.assembler.lastPopped {
+			if packet.csn <= decoder.assembler.last {
 				log.Println("dropping invalid packet: outdated csn: ", packet.csn)
 				continue assembly
 			}
 
-			if packet.csn > decoder.assembler.lastPushed {
+			if packet.csn > decoder.assembler.first {
 				// pushing new chunk
 				for i := uint32(0); i < decoder.assembler.size; i++ {
 					if decoder.assembler.order[i] == 0 {
 						log.Println("dropping outdated chunk: csn: ", decoder.assembler.csns[i])
-						decoder.assembler.lastPopped = decoder.assembler.csns[i]
+						decoder.assembler.last = decoder.assembler.csns[i]
 						// dropping the oldest chunk and replacing it with a new one, containing single packet
 						decoder.assembler.order[i] = decoder.assembler.size - 1
 						decoder.assembler.csns[i] = packet.csn
@@ -168,7 +206,7 @@ assembly:
 						decoder.assembler.order[i]--
 					}
 				}
-				decoder.assembler.lastPushed = packet.csn
+				decoder.assembler.first = packet.csn
 				continue assembly
 			}
 
@@ -197,7 +235,7 @@ assembly:
 			decoder.assembler.csns[index] = 0
 			decoder.assembler.order[index] = 0
 			decoder.assembler.chunks[index] = decoder.assembler.chunks[index][0:0]
-			decoder.assembler.lastPopped = packet.csn
+			decoder.assembler.last = packet.csn
 		}
 	}
 }

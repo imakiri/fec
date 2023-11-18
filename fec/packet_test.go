@@ -22,8 +22,7 @@ func TestPacket(t *testing.T) {
 
 	packet, rem = NewPacket(psn, csn, addr, data[:PacketDataSize:PacketDataSize])
 	assert.Nil(t, rem)
-	var raw, eq = packet.Marshal()
-	assert.False(t, eq)
+	var raw = packet.Marshal()
 
 	packet = new(Packet)
 	assert.EqualValues(t, 0, packet.csn)
