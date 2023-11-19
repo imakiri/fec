@@ -41,12 +41,13 @@ func TestFEC(t *testing.T) {
 	assert.NotNil(t, decoderOut)
 
 	var wg = new(sync.WaitGroup)
-	const chunks = 2
+	const chunks = 20
 	wg.Add(1)
 	go func() {
 		var size = encoder.IncomingSize()
-		var buf = make([]byte, size)
 		for i := 0; i < chunks; i++ {
+			var buf = make([]byte, size)
+
 			n, err := rand.Read(buf)
 			assert.NoError(t, err)
 			assert.EqualValues(t, size, n)
@@ -57,11 +58,20 @@ func TestFEC(t *testing.T) {
 
 			encoderIn <- buf
 		}
+
+		//var data = make([]byte, encoder.IncomingSize())
+		//for i := range data {
+		//	data[i] = 1
+		//}
+		//encoderIn <- data
+		//expecting.Write(data)
 		//
-		//encoderIn <- []byte("123")
-		//expecting.Write([]byte("123"))
-		//encoderIn <- []byte("456")
-		//expecting.Write([]byte("456"))
+		//data = make([]byte, encoder.IncomingSize())
+		//for i := range data {
+		//	data[i] = 2
+		//}
+		//encoderIn <- data
+		//expecting.Write(data)
 	}()
 
 	go func() {
@@ -104,6 +114,9 @@ func TestFEC(t *testing.T) {
 	}()
 
 	wg.Wait()
+	t.Log(got.Bytes()[9000])
+	t.Log(expecting.Bytes()[9000])
+
 	assert.EqualValues(t, expecting.Len(), got.Len())
 	assert.EqualValues(t, expecting.Bytes(), got.Bytes())
 }
