@@ -1,4 +1,4 @@
-package fec
+package codec
 
 import (
 	"encoding/binary"

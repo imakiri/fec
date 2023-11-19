@@ -1,4 +1,4 @@
-package fec
+package codec
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestFEC(t *testing.T) {
+func TestCodec(t *testing.T) {
 	const dataParts = 8
 	const totalParts = 12
 	var err error

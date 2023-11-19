@@ -1,4 +1,4 @@
-package fec
+package codec
 
 import (
 	"context"
@@ -233,7 +233,7 @@ assembly:
 				decoder.assembler.found[atChunk] = 1
 
 				continue assembly
-				// we ignore cases where total = 1 since it is noop in terms of fec
+				// we ignore cases where total = 1 since it is noop in terms of codec
 			}
 
 			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] != packet.csn {
