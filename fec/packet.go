@@ -21,7 +21,7 @@ type Packet struct {
 	hash    [PacketHashSize]byte // 1048...1056
 }
 
-func NewPacket(psn uint32, csn uint64, addr uint64, data []byte) (*Packet, []byte) {
+func NewPacket(csn uint64, psn uint32, addr uint64, data []byte) (*Packet, []byte) {
 	var packet = &Packet{
 		version: 2,
 		kind:    1,

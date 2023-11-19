@@ -17,10 +17,10 @@ func TestPacket(t *testing.T) {
 	const csn = 3
 	const addr = 1
 
-	var packet, rem = NewPacket(psn, csn, addr, data)
+	var packet, rem = NewPacket(csn, psn, addr, data)
 	assert.NotNil(t, rem)
 
-	packet, rem = NewPacket(psn, csn, addr, data[:PacketDataSize:PacketDataSize])
+	packet, rem = NewPacket(csn, psn, addr, data[:PacketDataSize:PacketDataSize])
 	assert.Nil(t, rem)
 	var raw = packet.Marshal()
 

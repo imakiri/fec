@@ -24,6 +24,7 @@ func TestChunk(t *testing.T) {
 	assert.EqualValues(t, csn, chunk.csn)
 	assert.EqualValues(t, kind, chunk.kind)
 	assert.EqualValues(t, parts*PacketDataSize, chunk.size)
+	assert.EqualValues(t, data[:parts*PacketDataSize], chunk.data)
 
 	chunk, rem = NewChunk(parts, csn, kind, data[:PacketDataSize])
 	assert.Nil(t, rem)
@@ -32,6 +33,7 @@ func TestChunk(t *testing.T) {
 	assert.EqualValues(t, kind, chunk.kind)
 	assert.EqualValues(t, PacketDataSize, chunk.size)
 	assert.EqualValues(t, parts, chunk.Parts())
+	assert.EqualValues(t, data[:PacketDataSize], chunk.data)
 
 	const total = 10
 	var payload = chunk.Marshal(total)
@@ -49,4 +51,5 @@ func TestChunk(t *testing.T) {
 	assert.EqualValues(t, kind, chunk.kind)
 	assert.EqualValues(t, PacketDataSize, chunk.size)
 	assert.EqualValues(t, parts, chunk.Parts())
+	assert.EqualValues(t, data[:PacketDataSize], chunk.data)
 }

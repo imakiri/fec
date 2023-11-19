@@ -47,13 +47,21 @@ func TestFEC(t *testing.T) {
 		var size = encoder.IncomingSize()
 		var buf = make([]byte, size)
 		for i := 0; i < chunks; i++ {
-			n, _ := rand.Read(buf)
-			assert.EqualValues(t, size, n)
-			n, err := expecting.Write(buf)
+			n, err := rand.Read(buf)
 			assert.NoError(t, err)
 			assert.EqualValues(t, size, n)
+
+			n, err = expecting.Write(buf)
+			assert.NoError(t, err)
+			assert.EqualValues(t, size, n)
+
 			encoderIn <- buf
 		}
+		//
+		//encoderIn <- []byte("123")
+		//expecting.Write([]byte("123"))
+		//encoderIn <- []byte("456")
+		//expecting.Write([]byte("456"))
 	}()
 
 	go func() {

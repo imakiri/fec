@@ -64,7 +64,7 @@ func (c *Chunk) Marshal(total uint64) [][]byte {
 	binary.LittleEndian.PutUint64(dst[i][6:14], c.csn)
 	binary.LittleEndian.PutUint64(dst[i][14:22], uint64(len(c.data)))
 
-	var copied = ChunkHeaderSize + copy(dst[i][ChunkHeaderSize:], c.data)
+	var copied = copy(dst[i][ChunkHeaderSize:], c.data)
 	for i = 1; uint64(copied) < c.size; i++ {
 		copied += copy(dst[i], c.data[copied:])
 	}
@@ -86,7 +86,7 @@ func (c *Chunk) Unmarshal(data [][]byte) bool {
 	c.size = binary.LittleEndian.Uint64(data[i][14:22])
 	c.data = make([]byte, c.size)
 
-	var copied = ChunkHeaderSize + copy(c.data, data[i][ChunkHeaderSize:])
+	var copied = copy(c.data, data[i][ChunkHeaderSize:])
 	for i = 1; uint64(copied) < c.size; i++ {
 		if i >= c.parts {
 			return false

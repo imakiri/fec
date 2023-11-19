@@ -79,7 +79,7 @@ encode:
 			}
 
 			for i := range data {
-				packet, rem = NewPacket(uint32(i), encoder.csn, AddrFec, data[i])
+				packet, rem = NewPacket(encoder.csn, uint32(i), AddrFec, data[i])
 				if rem != nil {
 					log.Printf("encode: NewPacket: res is not nil: len %d", len(rem))
 					continue

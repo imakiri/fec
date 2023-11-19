@@ -92,7 +92,7 @@ dispatch:
 			decoder.dispatcher.first = max(decoder.dispatcher.first, chunk.csn)
 
 			if chunk.csn != decoder.dispatcher.awaiting {
-				var at = chunk.csn % uint64(decoder.dispatcher.size)
+				var at = chunk.csn % decoder.dispatcher.size
 				if decoder.dispatcher.chunks[at] != nil {
 					log.Printf("dispatch: lost: csn: %d", decoder.dispatcher.awaiting)
 					decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
@@ -209,9 +209,11 @@ assembly:
 					if chunkEnd == 0 {
 						chunkEnd = decoder.assembler.size
 					}
+
 					var data = make([]*Packet, decoder.restorer.total)
 					copy(data, decoder.assembler.packets[chunkStart:chunkEnd])
 					decoder.restoreQueue <- data
+
 					decoder.assembler.last = packet.csn
 					decoder.assembler.lastOk = true
 					for at := chunkStart; at < chunkEnd; at++ {
