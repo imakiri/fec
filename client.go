@@ -29,7 +29,7 @@ type Client struct {
 	localConn  *net.UDPConn
 }
 
-func (client *Client) connect(ctx context.Context) error {
+func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 	var localConfig = net.ListenConfig{
 		Control:   nil,
 		KeepAlive: 0,
@@ -71,29 +71,36 @@ func (client *Client) connect(ctx context.Context) error {
 	}
 
 	client.serverConn.SetReadBuffer(20 * (codec.PacketSize + 12))
-	log.Println("server at", client.serverConn.RemoteAddr().String())
+	go func() {
+		<-ctx.Done()
+		client.serverConn.Close()
+		client.localConn.Close()
+	}()
 
-	n, err := connection.Write(UID)
+	var handshake = append(UID, peerID.Bytes()...)
+	n, err := connection.Write(handshake)
 	if err != nil {
 		return errors.Wrap(err, "connect: connection.Write")
 	}
-	if n != 16 {
+	if n != 32 {
 		return errors.Errorf("connect: connection.Write: written %d bytes", n)
 	}
 
-	var buf = make([]byte, 16)
+	var buf = make([]byte, 1472)
 	n, err = connection.Read(buf)
 	if err != nil {
 		return errors.Wrap(err, "connect: connection.Read")
 	}
-	if n != 16 {
+	if n < 32 {
 		return errors.Errorf("connect: connection.Read: read %d bytes", n)
 	}
 
-	if !bytes.Equal(buf, UID) {
+	if !bytes.Equal(buf[:32], handshake) {
 		return errors.Errorf("connect: failed: %s", buf)
 	}
 
+	log.Println("server at", client.serverConn.RemoteAddr().String())
+	log.Printf("handshake done")
 	return nil
 }
 
@@ -161,23 +168,27 @@ routeOut:
 			}
 		}
 	}
-
 }
 
-func (client *Client) Run(ctx context.Context, reader func(server *net.UDPConn) (io.ReadCloser, error), writer func(server *net.UDPConn) (io.WriteCloser, error)) error {
+type Handler interface {
+	Reader(server *net.UDPConn) (io.ReadCloser, error)
+	Writer(server *net.UDPConn) (io.WriteCloser, error)
+}
+
+func (client *Client) Run(ctx context.Context, peerID uuid.UUID, handler Handler) error {
 	var err error
 
-	err = client.connect(ctx)
+	err = client.connect(ctx, peerID)
 	if err != nil {
 		return errors.Wrap(err, "client.connect")
 	}
 
-	client.writer, err = writer(client.serverConn)
+	client.writer, err = handler.Writer(client.serverConn)
 	if err != nil {
 		return errors.Wrap(err, "writer")
 	}
 
-	client.reader, err = reader(client.serverConn)
+	client.reader, err = handler.Reader(client.serverConn)
 	if err != nil {
 		return errors.Wrap(err, "reader")
 	}

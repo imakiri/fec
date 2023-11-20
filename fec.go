@@ -46,5 +46,5 @@ func Secret() ([]byte, error) {
 }
 
 var Reporter reporter.Reporter = func(total, delta uint64) {
-	fmt.Printf("delta: %6d kbit/sec, total: %6d mbit/sec", delta*8/(1<<10), total*8/(1<<20))
+	fmt.Printf("delta: %6d kbit/sec, total: %6d mbit/sec\n", delta*8/(1<<10), total*8/(1<<20))
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"github.com/go-faster/errors"
+	"github.com/gofrs/uuid/v5"
 	"github.com/imakiri/fec"
 	"log"
 	"net"
@@ -12,10 +13,15 @@ import (
 	"time"
 )
 
+type Peer struct {
+	id   uuid.UUID
+	addr *net.UDPAddr
+}
+
 type Server struct {
 	port uint16
 
-	peers  [2]*net.UDPAddr
+	peers  [2]Peer
 	server *net.UDPConn
 
 	totalReceivedBefore uint64
@@ -72,32 +78,47 @@ func (s *Server) waitForReceiverAddr(ctx context.Context, receiverConn *net.UDPC
 	}
 }
 
-func (s *Server) setRoute(addr *net.UDPAddr) {
+func (s *Server) setRoute(peerID uuid.UUID, addr *net.UDPAddr) {
 	switch {
-	case s.peers[0] == nil || s.peers[0].AddrPort().Addr().String() == addr.AddrPort().Addr().String():
-		s.peers[0] = addr
-	case s.peers[1] == nil || s.peers[1].AddrPort().Addr().String() == addr.AddrPort().Addr().String():
-		s.peers[1] = addr
+	case s.peers[0].id == peerID:
+		log.Printf("set new addr %s for peer %s", addr.AddrPort(), peerID)
+		s.peers[0].addr = addr
+	case s.peers[1].id == peerID:
+		log.Printf("set new addr %s for peer %s", addr.AddrPort(), peerID)
+		s.peers[1].addr = addr
+	case s.peers[0].id == uuid.Nil:
+		log.Printf("set new peet: id %s addr %s", peerID, addr.AddrPort())
+		s.peers[0].addr = addr
+		s.peers[0].id = peerID
+	case s.peers[1].id == uuid.Nil:
+		log.Printf("set new peet: id %s addr %s", peerID, addr.AddrPort())
+		s.peers[1].addr = addr
+		s.peers[1].id = peerID
 	default:
-		s.peers[0] = addr
+		log.Println("no more room for new peers")
 	}
 }
 
-func (s *Server) checkHandshake(buf []byte) bool {
+func (s *Server) checkHandshake(buf []byte) uuid.UUID {
+	if len(buf) < 32 {
+		return uuid.Nil
+	}
+
 	for i := 0; i < 16; i++ {
 		if buf[i] != fec.UID[i] {
-			return false
+			return uuid.Nil
 		}
 	}
-	return true
+
+	return uuid.FromBytesOrNil(buf[16:32])
 }
 
 func (s *Server) route(addr *net.UDPAddr) *net.UDPAddr {
-	if s.peers[0].AddrPort().String() == addr.AddrPort().String() {
-		return s.peers[1]
+	if s.peers[0].addr.AddrPort().String() == addr.AddrPort().String() {
+		return s.peers[1].addr
 	}
-	if s.peers[1].AddrPort().String() == addr.AddrPort().String() {
-		return s.peers[0]
+	if s.peers[1].addr.AddrPort().String() == addr.AddrPort().String() {
+		return s.peers[0].addr
 	}
 	return nil
 }
@@ -117,13 +138,28 @@ serve:
 			}
 			atomic.AddUint64(s.totalReceived, uint64(n))
 
-			if s.checkHandshake(buf) {
-				s.setRoute(addr)
+			var peerID = s.checkHandshake(buf)
+			if peerID != uuid.Nil {
+				log.Printf("incomming handshake from %s", addr.AddrPort().String())
+				s.setRoute(peerID, addr)
+
+				m, err := s.server.WriteToUDP(buf, addr)
+				if err != nil {
+					log.Println(errors.Wrap(err, "serve: handshake s.server.WriteToUDP"))
+					continue serve
+				}
+				if m < 32 {
+					log.Println(errors.Wrap(err, "serve: handshake ack failed"))
+					continue serve
+				}
+
+				log.Println("handshake done")
+				continue serve
 			}
 
 			var toAddr = s.route(addr)
 			if toAddr == nil {
-				log.Println(errors.Wrap(err, "serve: unknown destination"))
+				log.Println(errors.Wrap(err, "serve: missing second peer"))
 				continue serve
 			}
 
@@ -161,6 +197,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	if !ok {
 		return errors.New("server.(*net.UDPConn): not ok")
 	}
+	go func() {
+		<-ctx.Done()
+		s.server.Close()
+	}()
 
 	go func() {
 		for {
