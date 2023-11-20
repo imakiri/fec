@@ -7,13 +7,13 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
 	"github.com/imakiri/fec/codec"
-	"github.com/imakiri/fec/secure"
+	"io"
 	"log"
 	"net"
 	"time"
 )
 
-var uid = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43"))
+var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
 type Client struct {
 	localPort  uint16
@@ -21,10 +21,12 @@ type Client struct {
 	serverAddr string
 
 	acceptedLocalAddr *net.UDPAddr
-	secureWriter      *secure.Writer
-	secureReader      *secure.Reader
-	serverConn        *net.UDPConn
-	localConn         *net.UDPConn
+
+	writer io.WriteCloser
+	reader io.ReadCloser
+
+	serverConn *net.UDPConn
+	localConn  *net.UDPConn
 }
 
 func (client *Client) connect(ctx context.Context) error {
@@ -71,7 +73,7 @@ func (client *Client) connect(ctx context.Context) error {
 	client.serverConn.SetReadBuffer(20 * (codec.PacketSize + 12))
 	log.Println("server at", client.serverConn.RemoteAddr().String())
 
-	n, err := connection.Write(uid.Bytes())
+	n, err := connection.Write(UID)
 	if err != nil {
 		return errors.Wrap(err, "connect: connection.Write")
 	}
@@ -88,7 +90,7 @@ func (client *Client) connect(ctx context.Context) error {
 		return errors.Errorf("connect: connection.Read: read %d bytes", n)
 	}
 
-	if !bytes.Equal(buf, uid.Bytes()) {
+	if !bytes.Equal(buf, UID) {
 		return errors.Errorf("connect: failed: %s", buf)
 	}
 
@@ -103,7 +105,7 @@ func (client *Client) routeIn(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			n, err := client.secureReader.Read(buf)
+			n, err := client.reader.Read(buf)
 			if err != nil {
 				log.Printf("routeIn: secureReader.Read: %v", err)
 				return
@@ -148,7 +150,7 @@ routeOut:
 				}
 			}
 
-			m, err := client.secureWriter.Write(buf)
+			m, err := client.writer.Write(buf)
 			if err != nil {
 				log.Printf("routeOut: serverConn.Write: %v", err)
 				return
@@ -162,7 +164,7 @@ routeOut:
 
 }
 
-func (client *Client) Run(ctx context.Context, secret []byte) error {
+func (client *Client) Run(ctx context.Context, reader func(server *net.UDPConn) (io.ReadCloser, error), writer func(server *net.UDPConn) (io.WriteCloser, error)) error {
 	var err error
 
 	err = client.connect(ctx)
@@ -170,14 +172,14 @@ func (client *Client) Run(ctx context.Context, secret []byte) error {
 		return errors.Wrap(err, "client.connect")
 	}
 
-	client.secureWriter, err = secure.NewWriter(codec.PacketSize, secret, client.serverConn)
+	client.writer, err = writer(client.serverConn)
 	if err != nil {
-		return errors.Wrap(err, "secureWriter.NewWriter")
+		return errors.Wrap(err, "writer")
 	}
 
-	client.secureReader, err = secure.NewReader(codec.PacketSize, secret, client.serverConn)
+	client.reader, err = reader(client.serverConn)
 	if err != nil {
-		return errors.Wrap(err, "secureWriter.NewWriter")
+		return errors.Wrap(err, "reader")
 	}
 
 	go client.routeIn(ctx)

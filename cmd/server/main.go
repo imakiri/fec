@@ -3,27 +3,30 @@ package main
 import (
 	"context"
 	"github.com/go-faster/errors"
+	"github.com/imakiri/fec"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type Server struct {
-	incomingPort, outgoingPort uint16
-	totalReceivedBefore        uint64
-	totalReceived              *uint64
-	totalSentBefore            uint64
-	totalSent                  *uint64
+	port uint16
+
+	peers  [2]*net.UDPAddr
+	server *net.UDPConn
+
+	totalReceivedBefore uint64
+	totalReceived       *uint64
+	totalSentBefore     uint64
+	totalSent           *uint64
 }
 
-func NewServer(incomingPort, outgoingPort uint16) *Server {
+func NewServer(port uint16) *Server {
 	var server = new(Server)
-	server.incomingPort = incomingPort
-	server.outgoingPort = outgoingPort
+	server.port = port
 	return server
 }
 
@@ -69,85 +72,96 @@ func (s *Server) waitForReceiverAddr(ctx context.Context, receiverConn *net.UDPC
 	}
 }
 
-func (s *Server) server(ctx context.Context) error {
-	s.totalReceived = new(uint64)
-	s.totalSent = new(uint64)
-
-	senderConn, err := net.ListenUDP("udp4", &net.UDPAddr{
-		IP:   nil,
-		Port: int(s.incomingPort),
-		Zone: "",
-	})
-	if err != nil {
-		return errors.Wrap(err, "sender listener")
+func (s *Server) setRoute(addr *net.UDPAddr) {
+	switch {
+	case s.peers[0] == nil || s.peers[0].AddrPort().Addr().String() == addr.AddrPort().Addr().String():
+		s.peers[0] = addr
+	case s.peers[1] == nil || s.peers[1].AddrPort().Addr().String() == addr.AddrPort().Addr().String():
+		s.peers[1] = addr
+	default:
+		s.peers[0] = addr
 	}
-	senderConn.SetReadBuffer(buffer_size)
-	log.Println("awaiting sender at", senderConn.LocalAddr().String())
-	defer senderConn.Close()
+}
 
-	receiverConn, err := net.ListenUDP("udp4", &net.UDPAddr{
-		IP:   nil,
-		Port: int(s.outgoingPort),
-		Zone: "",
-	})
-	if err != nil {
-		return errors.Wrap(err, "receiver listener")
+func (s *Server) checkHandshake(buf []byte) bool {
+	for i := 0; i < 16; i++ {
+		if buf[i] != fec.UID[i] {
+			return false
+		}
 	}
-	receiverConn.SetWriteBuffer(buffer_size)
-	log.Println("awaiting receiver at", receiverConn.LocalAddr().String())
-	defer receiverConn.Close()
+	return true
+}
 
-	go func() {
-		<-ctx.Done()
-		receiverConn.Close()
-		senderConn.Close()
-	}()
+func (s *Server) route(addr *net.UDPAddr) *net.UDPAddr {
+	if s.peers[0].AddrPort().String() == addr.AddrPort().String() {
+		return s.peers[1]
+	}
+	if s.peers[1].AddrPort().String() == addr.AddrPort().String() {
+		return s.peers[0]
+	}
+	return nil
+}
 
-	var senderAddr *net.UDPAddr
-	var wg = new(sync.WaitGroup)
-	wg.Add(2)
-	go func() {
-		senderAddr = s.waitForSenderAddr(ctx, senderConn)
-		wg.Done()
-	}()
-
-	var receiverAddr *net.UDPAddr
-	go func() {
-		receiverAddr = s.waitForReceiverAddr(ctx, receiverConn)
-		wg.Done()
-	}()
-	wg.Wait()
-
+func (s *Server) serve(ctx context.Context) {
 	var buf = make([]byte, upd_packet_size)
+serve:
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return
 		default:
-			senderConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			n, addr, err := senderConn.ReadFromUDP(buf)
+			n, addr, err := s.server.ReadFromUDP(buf)
 			if err != nil {
-				log.Println(errors.Wrap(err, "sender.ReadFromUDP(buf)"))
-				return nil
-			}
-			if !addr.IP.Equal(senderAddr.IP) {
-				log.Println(errors.Errorf("!addr.IP.Equal(senderAddr.IP), %s", addr.IP.String()))
-				continue
+				log.Println(errors.Wrap(err, "serve: s.server.ReadFrom"))
+				continue serve
 			}
 			atomic.AddUint64(s.totalReceived, uint64(n))
 
-			receiverConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			n, err = receiverConn.WriteToUDP(buf, receiverAddr)
+			if s.checkHandshake(buf) {
+				s.setRoute(addr)
+			}
+
+			var toAddr = s.route(addr)
+			if toAddr == nil {
+				log.Println(errors.Wrap(err, "serve: unknown destination"))
+				continue serve
+			}
+
+			m, err := s.server.WriteToUDP(buf, toAddr)
 			if err != nil {
-				log.Println(errors.Wrap(err, "receiver.WriteToUDP(buf, receiverAddr)"))
-				return nil
+				log.Println(errors.Wrap(err, "serve: s.server.WriteToUDP"))
+				continue serve
+			}
+			if n != m {
+				log.Println(errors.Wrap(err, "serve: n != m"))
+				continue serve
 			}
 			atomic.AddUint64(s.totalSent, uint64(n))
+			continue serve
 		}
 	}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	s.totalReceived = new(uint64)
+	s.totalSent = new(uint64)
+
+	var config = net.ListenConfig{
+		Control:   nil,
+		KeepAlive: 0,
+	}
+
+	var server, err = config.ListenPacket(ctx, "udp4", "45.80.209.11:25565")
+	if err != nil {
+		return errors.Wrap(err, "config.ListenPacket")
+	}
+
+	var ok bool
+	s.server, ok = server.(*net.UDPConn)
+	if !ok {
+		return errors.New("server.(*net.UDPConn): not ok")
+	}
+
 	go func() {
 		for {
 			select {
@@ -172,25 +186,15 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			var err = s.server(ctx)
-			if err != nil {
-				log.Println(err)
-			}
-		}
-	}
-
+	go s.serve(ctx)
+	return nil
 }
 
 const upd_packet_size = 1472
 const buffer_size = 10000 * upd_packet_size
 
 func main() {
-	var server = NewServer(25565, 25566)
+	var server = NewServer(25565)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
@@ -199,4 +203,6 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	<-ctx.Done()
 }
