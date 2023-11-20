@@ -5,6 +5,7 @@ import (
 	"flag"
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
+	"github.com/gosuri/uilive"
 	"github.com/imakiri/fec"
 	"github.com/imakiri/fec/codec"
 	"github.com/imakiri/fec/observer"
@@ -19,17 +20,53 @@ import (
 )
 
 type Handler struct {
+	output *uilive.Writer
+
+	readerOutput chan []byte
+	writerOutput chan []byte
+
 	secret []byte
 }
 
-func NewHandler(secret []byte) (*Handler, error) {
+func NewHandler(output *uilive.Writer, secret []byte) (*Handler, error) {
+	if output == nil {
+		return nil, errors.New("output cannot be nil")
+	}
+
 	var h = new(Handler)
+	h.readerOutput = make(chan []byte, 2)
+	h.writerOutput = make(chan []byte, 2)
 	h.secret = secret
+	h.output = output
+
+	go func() {
+		var line []byte
+		var err error
+		for {
+			line = <-h.readerOutput
+			_, err = output.Newline().Write(line)
+			if err == io.EOF {
+				return
+			}
+
+			line = <-h.writerOutput
+			_, err = output.Newline().Write(line)
+			if err == io.EOF {
+				return
+			}
+		}
+	}()
+
 	return h, nil
 }
 
 func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) {
-	reader, err = observer.NewReader(server, fec.Reporter, time.Second)
+	reporter, err := fec.NewReporter(h.readerOutput, "in ")
+	if err != nil {
+		return nil, errors.Wrap(err, "fec.NewReporter")
+	}
+
+	reader, err = observer.NewReader(server, reporter, time.Second)
 	if err != nil {
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
@@ -45,7 +82,12 @@ func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) 
 }
 
 func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error) {
-	writer, err = observer.NewWriter(server, fec.Reporter, time.Second)
+	reporter, err := fec.NewReporter(h.writerOutput, "out")
+	if err != nil {
+		return nil, errors.Wrap(err, "fec.NewReporter")
+	}
+
+	writer, err = observer.NewWriter(server, reporter, time.Second)
 	if err != nil {
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
@@ -95,6 +137,11 @@ func main() {
 	var cfg = flag.String("cfg", "client.cfg", "path to toml config file")
 	flag.Parse()
 
+	var output = uilive.New()
+	output.RefreshInterval = time.Second
+	output.Start()
+	log.SetOutput(output.Bypass())
+
 	var config, err = NewConfig(*cfg)
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "NewConfig"))
@@ -114,7 +161,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
 
-	handler, err := NewHandler(nil)
+	handler, err := NewHandler(output, nil)
 	//handler, err := NewHandler(secret)
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "NewHandler"))
@@ -126,4 +173,5 @@ func main() {
 	}
 
 	<-ctx.Done()
+	output.Stop()
 }

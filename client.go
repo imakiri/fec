@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const udpMax = 1472
+
 var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
 type Client struct {
@@ -86,7 +88,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		return errors.Errorf("connect: connection.Write: written %d bytes", n)
 	}
 
-	var buf = make([]byte, 1472)
+	var buf = make([]byte, udpMax)
 	n, err = connection.Read(buf)
 	if err != nil {
 		return errors.Wrap(err, "connect: connection.Read")
@@ -105,7 +107,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 }
 
 func (client *Client) routeIn(ctx context.Context) {
-	var buf = make([]byte, codec.PacketDataSize)
+	var buf = make([]byte, udpMax)
 	//routeIn:
 	for {
 		select {
@@ -121,13 +123,13 @@ func (client *Client) routeIn(ctx context.Context) {
 			for client.acceptedLocalAddr == nil {
 			}
 
-			m, err := client.localConn.WriteToUDP(buf, client.acceptedLocalAddr)
+			m, err := client.localConn.WriteToUDP(buf[:n], client.acceptedLocalAddr)
 			if err != nil {
 				log.Printf("routeIn: localConn.WriteToUDP: %v", err)
 				return
 			}
 			if n != m {
-				log.Println("routeIn: read and written are different")
+				log.Printf("routeIn: read %d written %d", n, m)
 				return
 			}
 		}
@@ -136,7 +138,7 @@ func (client *Client) routeIn(ctx context.Context) {
 }
 
 func (client *Client) routeOut(ctx context.Context) {
-	var buf = make([]byte, codec.PacketDataSize)
+	var buf = make([]byte, udpMax)
 routeOut:
 	for {
 		select {
@@ -157,13 +159,13 @@ routeOut:
 				}
 			}
 
-			m, err := client.writer.Write(buf)
+			m, err := client.writer.Write(buf[:n])
 			if err != nil {
 				log.Printf("routeOut: serverConn.Write: %v", err)
 				return
 			}
 			if n != m {
-				log.Println("routeOut: read and written are different")
+				log.Printf("routeOut: read %d written %d", n, m)
 				return
 			}
 		}

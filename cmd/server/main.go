@@ -124,7 +124,7 @@ func (s *Server) route(addr *net.UDPAddr) *net.UDPAddr {
 }
 
 func (s *Server) serve(ctx context.Context) {
-	var buf = make([]byte, upd_packet_size)
+	var buf = make([]byte, udpMax)
 serve:
 	for {
 		select {
@@ -163,13 +163,13 @@ serve:
 				continue serve
 			}
 
-			m, err := s.server.WriteToUDP(buf, toAddr)
+			m, err := s.server.WriteToUDP(buf[:n], toAddr)
 			if err != nil {
 				log.Println(errors.Wrap(err, "serve: s.server.WriteToUDP"))
 				continue serve
 			}
 			if n != m {
-				log.Println(errors.Wrap(err, "serve: n != m"))
+				log.Printf("routeOut: read %d written %d", n, m)
 				continue serve
 			}
 			atomic.AddUint64(s.totalSent, uint64(n))
@@ -230,8 +230,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	return nil
 }
 
-const upd_packet_size = 1472
-const buffer_size = 10000 * upd_packet_size
+const udpMax = 1472
 
 func main() {
 	var server = NewServer(25565)

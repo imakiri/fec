@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/atotto/clipboard"
 	"github.com/go-faster/errors"
-	"github.com/imakiri/fec/observer/reporter"
 	"log"
 	"math/rand"
 	"time"
@@ -43,8 +42,4 @@ func Secret() ([]byte, error) {
 	}
 
 	return secret, nil
-}
-
-var Reporter reporter.Reporter = func(total, delta uint64) {
-	fmt.Printf("delta: %6d kbit/sec, total: %6d mbit/sec\n", delta*8/(1<<10), total*8/(1<<20))
 }
