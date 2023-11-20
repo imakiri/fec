@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
+	"github.com/gosuri/uilive"
 	"github.com/imakiri/fec"
 	"log"
 	"net"
@@ -24,14 +26,16 @@ type Server struct {
 	peers  [2]Peer
 	server *net.UDPConn
 
+	logger              *uilive.Writer
 	totalReceivedBefore uint64
 	totalReceived       *uint64
 	totalSentBefore     uint64
 	totalSent           *uint64
 }
 
-func NewServer(port uint16) *Server {
+func NewServer(port uint16, logger *uilive.Writer) *Server {
 	var server = new(Server)
+	server.logger = logger
 	server.port = port
 	return server
 }
@@ -158,6 +162,7 @@ serve:
 			}
 
 			var toAddr = s.route(addr)
+			log.Println(toAddr.AddrPort().String())
 			if toAddr == nil {
 				log.Println(errors.Wrap(err, "serve: missing second peer"))
 				continue serve
@@ -212,8 +217,8 @@ func (s *Server) Serve(ctx context.Context) error {
 				var totalSent = atomic.LoadUint64(s.totalSent)
 
 				if int64(totalReceived)-int64(s.totalReceivedBefore) > 0 {
-					log.Printf("incoming speed: %6d KBit/sec, outgoing speed: %6d KBit/sec\n",
-						8*(totalReceived-s.totalReceivedBefore)/(1<<10), 8*(totalSent-s.totalSentBefore)/(1<<10))
+					_, _ = fmt.Fprintf(s.logger.Newline(), "incoming speed: %6d KBit/sec, outgoing speed: %6d KBit/sec, transmited: %6d MB\n",
+						8*(totalReceived-s.totalReceivedBefore)/(1<<10), 8*(totalSent-s.totalSentBefore)/(1<<10), totalReceived/(1<<20))
 				} else if totalReceived-s.totalReceivedBefore == 0 {
 				} else {
 					log.Printf("transmited: %d MBit\n", 8*(s.totalReceivedBefore-totalReceived)/(1<<20))
@@ -233,7 +238,12 @@ func (s *Server) Serve(ctx context.Context) error {
 const udpMax = 1472
 
 func main() {
-	var server = NewServer(25565)
+	var logger = uilive.New()
+	logger.Start()
+	logger.RefreshInterval = time.Second
+	log.SetOutput(logger.Bypass())
+
+	var server = NewServer(25565, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
@@ -244,4 +254,5 @@ func main() {
 	}
 
 	<-ctx.Done()
+	logger.Stop()
 }

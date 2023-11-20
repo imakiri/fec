@@ -51,6 +51,8 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		if !ok {
 			return errors.New("connect: listener.(*net.UDPConn) is not ok")
 		}
+
+		log.Println("local listener at", client.localConn.LocalAddr().String())
 	case Caller:
 		var dialer = net.Dialer{
 			Timeout:        0,
@@ -73,10 +75,11 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		if !ok {
 			return errors.New("connect: listener.(*net.UDPConn) is not ok")
 		}
+
+		log.Println("local caller to", client.localConn.RemoteAddr().String())
 	}
 
 	client.localConn.SetWriteBuffer(20 * (codec.PacketSize + 12))
-	log.Println("local at", client.localConn.LocalAddr().String())
 
 	var dialer = net.Dialer{
 		Timeout:        0,
@@ -147,10 +150,21 @@ func (client *Client) routeIn(ctx context.Context) {
 				return
 			}
 
-			for client.acceptedLocalAddr == nil {
+			var addr *net.UDPAddr
+			switch client.mode {
+			case Caller:
+				for client.acceptedLocalAddr == nil {
+				}
+				addr = client.acceptedLocalAddr
+			case Listener:
+				addr = &net.UDPAddr{
+					IP:   net.ParseIP("127.0.0.1"),
+					Port: int(client.localPort),
+					Zone: "",
+				}
 			}
 
-			m, err := client.localConn.WriteToUDP(buf[:n], client.acceptedLocalAddr)
+			m, err := client.localConn.WriteToUDP(buf[:n], addr)
 			if err != nil {
 				log.Printf("routeIn: localConn.WriteToUDP: %v", err)
 				return
@@ -159,6 +173,7 @@ func (client *Client) routeIn(ctx context.Context) {
 				log.Printf("routeIn: read %d written %d", n, m)
 				return
 			}
+
 		}
 	}
 
@@ -177,13 +192,18 @@ routeOut:
 				log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
 				return
 			}
-			if client.acceptedLocalAddr == nil {
-				client.acceptedLocalAddr = addr
-			} else {
-				if client.acceptedLocalAddr.AddrPort().String() != addr.AddrPort().String() {
-					log.Printf("routeOut: wrong local address: expecting %v, got %v", client.acceptedLocalAddr.AddrPort().String(), addr.AddrPort().String())
-					continue routeOut
+
+			switch client.mode {
+			case Caller:
+				if client.acceptedLocalAddr == nil {
+					client.acceptedLocalAddr = addr
+				} else {
+					if client.acceptedLocalAddr.AddrPort().String() != addr.AddrPort().String() {
+						log.Printf("routeOut: wrong local address: expecting %v, got %v", client.acceptedLocalAddr.AddrPort().String(), addr.AddrPort().String())
+						continue routeOut
+					}
 				}
+			case Listener:
 			}
 
 			m, err := client.writer.Write(buf[:n])
