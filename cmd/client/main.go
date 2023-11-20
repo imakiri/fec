@@ -103,6 +103,7 @@ func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error)
 }
 
 type Config struct {
+	Mode   string
 	Port   uint16
 	PeerID uuid.UUID
 }
@@ -114,6 +115,7 @@ func NewConfig(path string) (*Config, error) {
 	}
 
 	var cfg = new(struct {
+		Mode   string `toml:"mode"`
 		Port   uint16 `toml:"port"`
 		PeerID string `toml:"peer_id"`
 	})
@@ -124,6 +126,7 @@ func NewConfig(path string) (*Config, error) {
 	}
 
 	var config = new(Config)
+	config.Mode = cfg.Mode
 	config.Port = cfg.Port
 	config.PeerID, err = uuid.FromString(cfg.PeerID)
 	if err != nil {
@@ -153,7 +156,7 @@ func main() {
 	//}
 	//log.Printf("your common secret: %x", secret)
 
-	client, err := fec.NewClient(config.Port, 25565, "45.80.209.11")
+	client, err := fec.NewClient(config.Mode, config.Port, 25565, "45.80.209.11")
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "fec.NewClient"))
 	}

@@ -18,7 +18,9 @@ const udpMax = 1472
 var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
 type Client struct {
-	localPort  uint16
+	mode      mode
+	localPort uint16
+
 	serverPort uint16
 	serverAddr string
 
@@ -32,20 +34,45 @@ type Client struct {
 }
 
 func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
-	var localConfig = net.ListenConfig{
-		Control:   nil,
-		KeepAlive: 0,
-	}
-
-	var listener, err = localConfig.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.localPort))
-	if err != nil {
-		return errors.Wrap(err, "connect: localConfig.ListenPacket")
-	}
-
 	var ok bool
-	client.localConn, ok = listener.(*net.UDPConn)
-	if !ok {
-		return errors.New("connect: listener.(*net.UDPConn) is not ok")
+	switch client.mode {
+	case Listener:
+		var localConfig = net.ListenConfig{
+			Control:   nil,
+			KeepAlive: 0,
+		}
+
+		var listener, err = localConfig.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.localPort))
+		if err != nil {
+			return errors.Wrap(err, "connect: localConfig.ListenPacket")
+		}
+
+		client.localConn, ok = listener.(*net.UDPConn)
+		if !ok {
+			return errors.New("connect: listener.(*net.UDPConn) is not ok")
+		}
+	case Caller:
+		var dialer = net.Dialer{
+			Timeout:        0,
+			Deadline:       time.Time{},
+			LocalAddr:      nil,
+			FallbackDelay:  0,
+			KeepAlive:      0,
+			Resolver:       nil,
+			Control:        nil,
+			ControlContext: nil,
+		}
+
+		var dial, err = dialer.DialContext(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.localPort))
+		if err != nil {
+			return errors.Wrap(err, "connect: localConfig.ListenPacket")
+		}
+
+		var ok bool
+		client.localConn, ok = dial.(*net.UDPConn)
+		if !ok {
+			return errors.New("connect: listener.(*net.UDPConn) is not ok")
+		}
 	}
 
 	client.localConn.SetWriteBuffer(20 * (codec.PacketSize + 12))
@@ -200,8 +227,24 @@ func (client *Client) Run(ctx context.Context, peerID uuid.UUID, handler Handler
 	return nil
 }
 
-func NewClient(localPort uint16, serverPort uint16, serverAddr string) (*Client, error) {
+type mode string
+
+const (
+	Caller   mode = "caller"
+	Listener mode = "listener"
+)
+
+func NewClient(mode string, localPort uint16, serverPort uint16, serverAddr string) (*Client, error) {
 	var router = new(Client)
+	switch mode {
+	case string(Caller):
+		router.mode = Caller
+	case string(Listener):
+		router.mode = Listener
+	default:
+		return nil, errors.Errorf("invalid mode: %s", mode)
+	}
+
 	router.serverPort = serverPort
 	router.serverAddr = serverAddr
 	router.localPort = localPort
