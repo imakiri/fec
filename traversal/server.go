@@ -3,6 +3,7 @@ package traversal
 import (
 	"github.com/gofrs/uuid/v5"
 	"github.com/imakiri/fec"
+	"github.com/imakiri/fec/buffer"
 	"github.com/imakiri/fec/erres"
 	"log"
 )
@@ -14,11 +15,20 @@ type Invocation struct {
 
 type Server struct {
 	peers [2]uuid.UUID
-	box   [2][][]byte
+	box   [2]*buffer.Ring[[]byte]
+}
+
+func NewServer(bufSize uint64) (*Server, error) {
+	var server = new(Server)
+	server.box[0] = buffer.NewRing(0, make([][]byte, bufSize))
+	server.box[1] = buffer.NewRing(0, make([][]byte, bufSize))
+	return server, nil
 }
 
 const ErrInvalidData erres.Error = "invalid data"
 const ErrMaxPeers erres.Error = "maximum peers reached"
+const ErrPeerNotFound erres.Error = "peer not found"
+const ErrInvalidMode erres.Error = "invalid mode"
 
 func (s *Server) serveHandshake(inv Invocation) error {
 	var data = inv.Req[1:]
@@ -65,8 +75,14 @@ func (s *Server) serveSend(inv Invocation) error {
 
 	switch peerID {
 	case s.peers[0]:
-		//
+		s.box[0].Write(false, data[16:])
+	case s.peers[1]:
+		s.box[1].Write(false, data[16:])
+	default:
+		return ErrPeerNotFound
 	}
+
+	return nil
 }
 
 func (s *Server) Serve(inv Invocation) error {
@@ -78,6 +94,8 @@ func (s *Server) Serve(inv Invocation) error {
 	case Handshake:
 		return s.serveHandshake(inv)
 	case Send:
-		return s.serverHandshake(inv)
+		return s.serveSend(inv)
+	default:
+		return ErrInvalidMode
 	}
 }
