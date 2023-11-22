@@ -45,7 +45,7 @@ func TestCodec(t *testing.T) {
 	const chunks = 20
 	wg.Add(1)
 	go func() {
-		var size = encoder.IncomingSize()
+		var size = encoder.IncomingSize() - 3
 		for i := 0; i < chunks; i++ {
 			var buf = make([]byte, size)
 

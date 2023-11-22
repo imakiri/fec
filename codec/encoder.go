@@ -75,7 +75,7 @@ func (encoder *Encoder) flush() {
 
 func (encoder *Encoder) aggregate(ctx context.Context) {
 	var data []byte
-aggregate:
+	//aggregate:
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,23 +83,16 @@ aggregate:
 		case <-encoder.aggregator.timer.C:
 			encoder.flush()
 		case data = <-encoder.aggregateQueue:
-			var newLength = len(data) + len(encoder.aggregator.buf)
-			if newLength < cap(encoder.aggregator.buf) {
-				encoder.aggregator.buf = append(encoder.aggregator.buf, data...)
-				continue aggregate
-			}
-
-			var c = newLength / cap(encoder.aggregator.buf)
-			var sep int
-			for i := 0; i < c; i++ {
-				sep += cap(encoder.aggregator.buf)
+			for len(data) > 0 {
+				var sep = min(cap(encoder.aggregator.buf)-len(encoder.aggregator.buf), len(data))
 				encoder.aggregator.buf = append(encoder.aggregator.buf, data[:sep]...)
-				encoder.flush()
+
+				if len(encoder.aggregator.buf) == cap(encoder.aggregator.buf) {
+					encoder.flush()
+				}
+
 				data = data[sep:]
 			}
-
-			var rem = newLength % cap(encoder.aggregator.buf)
-			encoder.aggregator.buf = append(encoder.aggregator.buf, data[rem:]...)
 			encoder.aggregator.timer.Reset(encoder.aggregator.timeout)
 		}
 	}
