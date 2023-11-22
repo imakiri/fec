@@ -26,6 +26,9 @@ type Client struct {
 
 	acceptedLocalAddr *net.UDPAddr
 
+	decoder *codec.Decoder
+	encoder *codec.Encoder
+
 	writer io.WriteCloser
 	reader io.ReadCloser
 
@@ -137,86 +140,104 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 }
 
 func (client *Client) routeIn(ctx context.Context) {
-	var buf = make([]byte, udpMax)
+	var decoderIn, decoderOut, _ = client.decoder.Decode(ctx)
 	//routeIn:
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			n, err := client.reader.Read(buf)
-			if err != nil {
-				log.Printf("routeIn: secureReader.Read: %v", err)
+	go func() {
+		var buf = make([]byte, udpMax)
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-
-			var addr *net.UDPAddr
-			switch client.mode {
-			case Caller:
-				for client.acceptedLocalAddr == nil {
+			default:
+				n, err := client.reader.Read(buf)
+				if err != nil {
+					log.Printf("routeIn: secureReader.Read: %v", err)
+					return
 				}
-				addr = client.acceptedLocalAddr
-			case Listener:
-				addr = &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: int(client.localPort),
-					Zone: "",
-				}
+				decoderIn <- buf[:n]
 			}
-
-			m, err := client.localConn.WriteToUDP(buf[:n], addr)
-			if err != nil {
-				log.Printf("routeIn: localConn.WriteToUDP: %v", err)
-				return
-			}
-			if n != m {
-				log.Printf("routeIn: read %d written %d", n, m)
-				return
-			}
-
 		}
-	}
-
-}
-
-func (client *Client) routeOut(ctx context.Context) {
-	var buf = make([]byte, udpMax)
-routeOut:
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			n, addr, err := client.localConn.ReadFromUDP(buf)
-			if err != nil {
-				log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
+	}()
+	go func() {
+		var buf = make([]byte, udpMax)
+		var err error
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-
-			switch client.mode {
-			case Caller:
-				if client.acceptedLocalAddr == nil {
-					client.acceptedLocalAddr = addr
-				} else {
-					if client.acceptedLocalAddr.AddrPort().String() != addr.AddrPort().String() {
-						log.Printf("routeOut: wrong local address: expecting %v, got %v", client.acceptedLocalAddr.AddrPort().String(), addr.AddrPort().String())
-						continue routeOut
+			case buf = <-decoderOut:
+				switch client.mode {
+				case Caller:
+					_, err = client.localConn.Write(buf)
+					if err != nil {
+						log.Printf("routeIn: localConn.Write: %v", err)
+						return
+					}
+				case Listener:
+					for client.acceptedLocalAddr == nil {
+					}
+					_, err = client.localConn.WriteToUDP(buf, client.acceptedLocalAddr)
+					if err != nil {
+						log.Printf("routeIn: localConn.Write: %v", err)
+						return
 					}
 				}
-			case Listener:
-			}
-
-			m, err := client.writer.Write(buf[:n])
-			if err != nil {
-				log.Printf("routeOut: serverConn.Write: %v", err)
-				return
-			}
-			if n != m {
-				log.Printf("routeOut: read %d written %d", n, m)
-				return
 			}
 		}
-	}
+	}()
+}
+
+var DataParts = 10
+
+func (client *Client) routeOut(ctx context.Context) {
+	var encodeIn, encoderOut, _ = client.encoder.Encode(ctx)
+	//routeOut:
+	go func() {
+		var buf = make([]byte, DataParts*udpMax)
+		var err error
+		var addr *net.UDPAddr
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				var total int
+				var n int
+				for i := 0; i < DataParts; i++ {
+					n, addr, err = client.localConn.ReadFromUDP(buf[n : n+udpMax])
+					if err != nil {
+						log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
+						return
+					}
+					total += n
+				}
+
+				switch client.mode {
+				case Caller:
+				case Listener:
+					client.acceptedLocalAddr = addr
+				}
+
+				encodeIn <- buf[:n]
+			}
+		}
+	}()
+	go func() {
+		var buf = make([]byte, udpMax)
+		var err error
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case buf = <-encoderOut:
+				_, err = client.writer.Write(buf)
+				if err != nil {
+					log.Printf("routeOut: serverConn.Write: %v", err)
+					return
+				}
+			}
+		}
+	}()
 }
 
 type Handler interface {
@@ -264,7 +285,15 @@ func NewClient(mode string, localPort uint16, serverPort uint16, serverAddr stri
 	default:
 		return nil, errors.Errorf("invalid mode: %s", mode)
 	}
-
+	var err error
+	router.encoder, err = codec.NewEncoder(10*time.Millisecond, 10, 12)
+	if err != nil {
+		return nil, errors.Wrap(err, "codec.NewEncoder")
+	}
+	router.decoder, err = codec.NewDecoder(10, 12, 96, 16)
+	if err != nil {
+		return nil, errors.Wrap(err, "codec.NewEncoder")
+	}
 	router.serverPort = serverPort
 	router.serverAddr = serverAddr
 	router.localPort = localPort

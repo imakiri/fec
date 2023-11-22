@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCodec(t *testing.T) {
@@ -24,7 +25,7 @@ func TestCodec(t *testing.T) {
 	var encoder *Encoder
 	var decoder *Decoder
 
-	encoder, err = NewEncoder(dataParts, totalParts)
+	encoder, err = NewEncoder(20*time.Millisecond, dataParts, totalParts)
 	assert.NoError(t, err)
 
 	decoder, err = NewDecoder(dataParts, totalParts, 8, 8)

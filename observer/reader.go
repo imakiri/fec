@@ -56,6 +56,7 @@ func NewReader(src io.ReadCloser, rep Reporter, interval time.Duration) (*Reader
 
 func (r *Reader) Read(p []byte) (n int, err error) {
 	n, err = r.src.Read(p)
+	//log.Printf("read %x\n", p)
 	atomic.AddUint64(r.total, uint64(n))
 	return n, err
 }

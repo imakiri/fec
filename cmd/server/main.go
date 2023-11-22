@@ -162,7 +162,6 @@ serve:
 			}
 
 			var toAddr = s.route(addr)
-			log.Println(toAddr.AddrPort().String())
 			if toAddr == nil {
 				log.Println(errors.Wrap(err, "serve: missing second peer"))
 				continue serve

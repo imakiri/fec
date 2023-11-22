@@ -71,6 +71,8 @@ func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) 
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
 
+	//reader = unit.NewReader(reader, codec.PacketSize, true, false)
+
 	if h.secret != nil {
 		reader, err = secure.NewReader(codec.PacketSize, h.secret, reader)
 		if err != nil {
@@ -91,6 +93,8 @@ func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error)
 	if err != nil {
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
+
+	//writer = unit.NewWriter(writer, codec.PacketDataSize, false, true)
 
 	if h.secret != nil {
 		writer, err = secure.NewWriter(codec.PacketSize, h.secret, writer)

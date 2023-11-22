@@ -56,6 +56,7 @@ func NewWriter(dst io.WriteCloser, rep Reporter, interval time.Duration) (*Write
 
 func (r *Writer) Write(p []byte) (n int, err error) {
 	n, err = r.dst.Write(p)
+	//log.Printf("write %x\n", p)
 	atomic.AddUint64(r.total, uint64(n))
 	return n, err
 }
