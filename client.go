@@ -143,12 +143,13 @@ func (client *Client) routeIn(ctx context.Context) {
 	var decoderIn, decoderOut, _ = client.decoder.Decode(ctx)
 	//routeIn:
 	go func() {
-		var buf = make([]byte, udpMax)
+		var buf []byte
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
+				buf = make([]byte, udpMax)
 				n, err := client.reader.Read(buf)
 				if err != nil {
 					log.Printf("routeIn: secureReader.Read: %v", err)
@@ -187,29 +188,24 @@ func (client *Client) routeIn(ctx context.Context) {
 	}()
 }
 
-var DataParts = 10
-
 func (client *Client) routeOut(ctx context.Context) {
 	var encodeIn, encoderOut, _ = client.encoder.Encode(ctx)
 	//routeOut:
 	go func() {
-		var buf = make([]byte, DataParts*udpMax)
+		var buf []byte
 		var err error
 		var addr *net.UDPAddr
+		var n int
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				var total int
-				var n int
-				for i := 0; i < DataParts; i++ {
-					n, addr, err = client.localConn.ReadFromUDP(buf[n : n+udpMax])
-					if err != nil {
-						log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
-						return
-					}
-					total += n
+				buf = make([]byte, udpMax)
+				n, addr, err = client.localConn.ReadFromUDP(buf)
+				if err != nil {
+					log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
+					return
 				}
 
 				switch client.mode {
@@ -286,11 +282,11 @@ func NewClient(mode string, localPort uint16, serverPort uint16, serverAddr stri
 		return nil, errors.Errorf("invalid mode: %s", mode)
 	}
 	var err error
-	router.encoder, err = codec.NewEncoder(10*time.Millisecond, 10, 12)
+	router.encoder, err = codec.NewEncoder(10*time.Millisecond, 10, 16)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.decoder, err = codec.NewDecoder(10, 12, 96, 16)
+	router.decoder, err = codec.NewDecoder(10, 16, 96, 16)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}

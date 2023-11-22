@@ -5,6 +5,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/klauspost/reedsolomon"
 	"log"
+	"sync/atomic"
 )
 
 type Decoder struct {
@@ -16,11 +17,17 @@ type Decoder struct {
 		csn     []uint64
 		found   []uint64
 		packets []*Packet
+
+		ok  *uint64
+		err *uint64
 	}
 	restorer struct {
 		rs    reedsolomon.Encoder
 		total uint64
 		data  uint64
+
+		ok  *uint64
+		err *uint64
 	}
 	dispatcher struct {
 		size     uint64
@@ -28,6 +35,9 @@ type Decoder struct {
 		last     uint64
 		awaiting uint64
 		chunks   []*Chunk
+
+		ok  *uint64
+		err *uint64
 	}
 
 	argumentQueue chan []byte
@@ -49,6 +59,8 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	decoder.dispatcher.size = dispatcherSize
 	decoder.dispatcher.awaiting = 1
 	decoder.dispatcher.chunks = make([]*Chunk, dispatcherSize)
+	decoder.dispatcher.ok = new(uint64)
+	decoder.dispatcher.err = new(uint64)
 
 	decoder.restorer.rs, err = reedsolomon.New(int(dataParts), int(totalParts)-int(dataParts))
 	if err != nil {
@@ -56,12 +68,16 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	}
 	decoder.restorer.data = dataParts
 	decoder.restorer.total = totalParts
+	decoder.restorer.ok = new(uint64)
+	decoder.restorer.err = new(uint64)
 
 	decoder.assembler.size = assemblerLines * totalParts
 	decoder.assembler.lines = assemblerLines
 	decoder.assembler.found = make([]uint64, assemblerLines)
 	decoder.assembler.csn = make([]uint64, assemblerLines)
 	decoder.assembler.packets = make([]*Packet, assemblerLines*totalParts)
+	decoder.assembler.ok = new(uint64)
+	decoder.assembler.err = new(uint64)
 
 	return decoder, nil
 }
@@ -76,16 +92,19 @@ dispatch:
 		case chunk = <-decoder.dispatchQueue:
 			if chunk == nil {
 				log.Println("dispatch: dropping invalid chunk: nil chunk")
+				atomic.AddUint64(decoder.dispatcher.err, 1)
 				continue dispatch
 			}
 
 			if chunk.csn == 0 {
 				log.Println("dispatch: dropping invalid chunk: csn == 0")
+				atomic.AddUint64(decoder.dispatcher.err, 1)
 				continue dispatch
 			}
 
 			if chunk.csn <= decoder.dispatcher.last {
 				log.Printf("dispatch: detached chunk: csn: %d", chunk.csn)
+				atomic.AddUint64(decoder.dispatcher.err, 1)
 				continue dispatch
 			}
 
@@ -95,6 +114,7 @@ dispatch:
 				var at = chunk.csn % decoder.dispatcher.size
 				if decoder.dispatcher.chunks[at] != nil {
 					log.Printf("dispatch: lost: csn: %d", decoder.dispatcher.awaiting)
+					atomic.AddUint64(decoder.dispatcher.err, 1)
 					decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
 					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 					decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
@@ -102,6 +122,7 @@ dispatch:
 					decoder.dispatcher.chunks[at] = chunk
 				} else {
 					decoder.dispatcher.chunks[at] = chunk
+					atomic.AddUint64(decoder.dispatcher.ok, 1)
 					continue dispatch
 				}
 			} else {
@@ -112,15 +133,18 @@ dispatch:
 
 			var length = decoder.dispatcher.first - decoder.dispatcher.last
 			if length == 0 {
+				atomic.AddUint64(decoder.dispatcher.ok, 1)
 				continue dispatch
 			}
 
 			for i := decoder.dispatcher.last; i < decoder.dispatcher.first; i++ {
 				var at = (i + 1) % decoder.dispatcher.size
 				if decoder.dispatcher.chunks[at] == nil {
+					atomic.AddUint64(decoder.dispatcher.ok, 1)
 					continue dispatch
 				}
 				if decoder.dispatcher.chunks[at].csn != decoder.dispatcher.awaiting {
+					atomic.AddUint64(decoder.dispatcher.ok, 1)
 					continue dispatch
 				}
 
@@ -129,6 +153,7 @@ dispatch:
 				decoder.dispatcher.awaiting++
 				decoder.dispatcher.chunks[at] = nil
 			}
+			atomic.AddUint64(decoder.dispatcher.ok, 1)
 		}
 	}
 }
@@ -152,6 +177,7 @@ restore:
 			err = decoder.restorer.rs.ReconstructData(data)
 			if err != nil {
 				log.Printf("restore: rs.ReconstructData(data): err %v", err)
+				atomic.AddUint64(decoder.restorer.err, 1)
 				continue restore
 			}
 
@@ -159,10 +185,12 @@ restore:
 			ok = chunk.Unmarshal(data[:decoder.restorer.data])
 			if !ok {
 				log.Println("restore: dropping invalid packet: chunk.Unmarshal: not ok")
+				atomic.AddUint64(decoder.restorer.err, 1)
 				continue restore
 			}
 
 			decoder.dispatchQueue <- chunk
+			atomic.AddUint64(decoder.restorer.ok, 1)
 		}
 	}
 }
@@ -177,17 +205,20 @@ assembly:
 		case packet = <-decoder.assemblyQueue:
 			if packet == nil {
 				log.Println("assembly: dropping invalid packet: packet is nil")
+				atomic.AddUint64(decoder.assembler.err, 1)
 				continue assembly
 			}
 
 			if packet.csn == 0 {
 				log.Println("assembly: dropping invalid packet: csn == 0")
+				atomic.AddUint64(decoder.assembler.err, 1)
 				continue assembly
 			}
 
 			if packet.csn <= decoder.assembler.last {
 				if !decoder.assembler.lastOk {
 					log.Printf("assembly: last csn: %d, detached packet: csn: %d, psn: %d", decoder.assembler.last, packet.csn, packet.psn)
+					atomic.AddUint64(decoder.assembler.err, 1)
 				}
 				continue assembly
 			}
@@ -198,6 +229,7 @@ assembly:
 			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] == packet.csn {
 				if uint64(packet.psn) > decoder.restorer.total {
 					log.Printf("assembly: invalid psn: %d", packet.psn)
+					atomic.AddUint64(decoder.assembler.err, 1)
 					continue assembly
 				}
 				decoder.assembler.packets[atPacket] = packet
@@ -223,6 +255,7 @@ assembly:
 					decoder.assembler.csn[atChunk] = 0
 				}
 
+				atomic.AddUint64(decoder.assembler.ok, 1)
 				continue assembly
 			}
 
@@ -232,6 +265,7 @@ assembly:
 				decoder.assembler.csn[atChunk] = packet.csn
 				decoder.assembler.found[atChunk] = 1
 
+				atomic.AddUint64(decoder.assembler.ok, 1)
 				continue assembly
 				// we ignore cases where total = 1 since it is noop in terms of codec
 			}
@@ -240,6 +274,7 @@ assembly:
 				decoder.assembler.last = decoder.assembler.csn[atChunk]
 				decoder.assembler.lastOk = false
 				log.Printf("assembly: dropping outdated chunk: csn: %d", decoder.assembler.csn[atChunk])
+				atomic.AddUint64(decoder.assembler.err, 1)
 
 				var chunkStart = packet.csn * decoder.restorer.total % decoder.assembler.size
 				var chunkEnd = (packet.csn*decoder.restorer.total + decoder.restorer.total) % decoder.assembler.size
@@ -251,6 +286,7 @@ assembly:
 				decoder.assembler.csn[atChunk] = packet.csn
 				decoder.assembler.found[atChunk] = 1
 
+				atomic.AddUint64(decoder.assembler.ok, 1)
 				continue assembly
 			}
 
@@ -312,7 +348,7 @@ func (decoder *Decoder) Decode(ctx context.Context) (in, out chan []byte, err er
 	decoder.resultQueue = make(chan []byte, 8)
 	decoder.dispatchQueue = make(chan *Chunk, 4)
 	decoder.restoreQueue = make(chan []*Packet, 4)
-	decoder.assemblyQueue = make(chan *Packet, 8)
+	decoder.assemblyQueue = make(chan *Packet, 8*decoder.restorer.data)
 	decoder.argumentQueue = make(chan []byte, 8*decoder.restorer.data)
 
 	go decoder.dispatch(ctx)
