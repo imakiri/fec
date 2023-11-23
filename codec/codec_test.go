@@ -13,8 +13,8 @@ import (
 )
 
 func TestCodec(t *testing.T) {
-	const dataParts = 8
-	const totalParts = 12
+	const dataParts = 4
+	const totalParts = 8
 	var err error
 	var ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
@@ -25,10 +25,10 @@ func TestCodec(t *testing.T) {
 	var encoder *Encoder
 	var decoder *Decoder
 
-	encoder, err = NewEncoder(20*time.Millisecond, dataParts, totalParts)
+	encoder, err = NewEncoder(20*time.Millisecond, 32, dataParts, totalParts)
 	assert.NoError(t, err)
 
-	decoder, err = NewDecoder(dataParts, totalParts, 8, 8)
+	decoder, err = NewDecoder(dataParts, totalParts, 128, 16)
 	assert.NoError(t, err)
 
 	encoderIn, encoderOut, err := encoder.Encode(ctx)
@@ -42,7 +42,7 @@ func TestCodec(t *testing.T) {
 	assert.NotNil(t, decoderOut)
 
 	var wg = new(sync.WaitGroup)
-	const chunks = 20
+	const chunks = 32
 	wg.Add(1)
 	go func() {
 		var size = encoder.IncomingSize() - 3
@@ -115,8 +115,8 @@ func TestCodec(t *testing.T) {
 	}()
 
 	wg.Wait()
-	t.Log(got.Bytes()[9000])
-	t.Log(expecting.Bytes()[9000])
+	t.Log(got.Bytes()[20])
+	t.Log(expecting.Bytes()[20])
 
 	assert.EqualValues(t, expecting.Len(), got.Len())
 	assert.EqualValues(t, expecting.Bytes(), got.Bytes())

@@ -40,7 +40,7 @@ func assertPackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint6
 
 func casePacket(csn, psn uint64, expect map[uint64]map[uint64][]byte) *Packet {
 	var data = []byte(fmt.Sprintf("%d.%d", csn, psn))
-	var packet, _ = NewPacket(csn, uint32(psn), KindData, data)
+	var packet, _ = NewPacket(1, csn, uint32(psn), KindData, data)
 	if expect[csn] == nil {
 		expect[csn] = make(map[uint64][]byte)
 	}
@@ -126,7 +126,7 @@ func TestRestorer(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := range buf {
-		packet, rem = NewPacket(1, uint32(i), AddrFec, buf[i])
+		packet, rem = NewPacket(1, 1, uint32(i), AddrFec, buf[i])
 		assert.Nil(t, rem)
 		packets[i] = packet
 	}
@@ -145,7 +145,7 @@ func TestRestorer(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := range buf {
-		packet, rem = NewPacket(2, uint32(i), AddrFec, buf[i])
+		packet, rem = NewPacket(1, 2, uint32(i), AddrFec, buf[i])
 		assert.Nil(t, rem)
 		packets[i] = packet
 	}

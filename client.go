@@ -281,12 +281,14 @@ func NewClient(mode string, localPort uint16, serverPort uint16, serverAddr stri
 	default:
 		return nil, errors.Errorf("invalid mode: %s", mode)
 	}
+	const dataParts = 4
+	const totalParts = 8
 	var err error
-	router.encoder, err = codec.NewEncoder(10*time.Millisecond, 10, 16)
+	router.encoder, err = codec.NewEncoder(30*time.Millisecond, 16, dataParts, totalParts)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.decoder, err = codec.NewDecoder(10, 16, 96, 16)
+	router.decoder, err = codec.NewDecoder(dataParts, totalParts, 128, 128)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}

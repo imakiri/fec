@@ -21,13 +21,19 @@ type Encoder struct {
 		data  uint64
 		csn   uint64
 	}
+	dispatcher struct {
+		length uint64
+		chunks uint64
+		buf    []*Packet
+	}
 
-	aggregateQueue chan []byte
-	encodeQueue    chan []byte
-	resultQueue    chan []byte
+	aggregateQueue  chan []byte
+	encodeQueue     chan []byte
+	dispatcherQueue chan *Packet
+	resultQueue     chan []byte
 }
 
-func NewEncoder(aggrtTimeout time.Duration, dataParts, totalParts uint64) (*Encoder, error) {
+func NewEncoder(aggrtTimeout time.Duration, dispatcherSize, dataParts, totalParts uint64) (*Encoder, error) {
 	if dataParts == 0 {
 		return nil, errors.New("dataParts cannot be zero")
 	}
@@ -49,12 +55,17 @@ func NewEncoder(aggrtTimeout time.Duration, dataParts, totalParts uint64) (*Enco
 	encoder.aggregator.timeout = aggrtTimeout
 	encoder.aggregator.timer = time.NewTimer(100000000 * time.Second)
 
+	encoder.dispatcher.chunks = dispatcherSize
+	encoder.dispatcher.buf = make([]*Packet, totalParts*dispatcherSize)
+
 	return encoder, nil
 }
 
 func (encoder *Encoder) close(ctx context.Context) {
 	<-ctx.Done()
 	close(encoder.aggregateQueue)
+	close(encoder.dispatcherQueue)
+	close(encoder.encodeQueue)
 	close(encoder.resultQueue)
 }
 
@@ -66,33 +77,42 @@ func (encoder *Encoder) OutgoingSize() uint64 {
 	return PacketSize
 }
 
-func (encoder *Encoder) flush() {
+func (encoder *Encoder) aggregatorFlush() {
 	var agData = make([]byte, len(encoder.aggregator.buf))
 	copy(agData, encoder.aggregator.buf)
 	encoder.aggregator.buf = encoder.aggregator.buf[0:0]
-	encoder.encodeQueue <- agData
+	select {
+	case encoder.encodeQueue <- agData:
+	}
 }
 
-func (encoder *Encoder) aggregate(ctx context.Context) {
-	var data []byte
-	var sep int
-	//aggregate:
+func (encoder *Encoder) dispatch(ctx context.Context) {
+	var packet *Packet
+	var chunks = encoder.dispatcher.chunks
+	var perChunk = encoder.encoder.total
+	var size = chunks * perChunk
+	//dispatch:
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-encoder.aggregator.timer.C:
-			encoder.flush()
-		case data = <-encoder.aggregateQueue:
-			for len(data) > 0 {
-				sep = min(cap(encoder.aggregator.buf)-len(encoder.aggregator.buf), len(data))
-				encoder.aggregator.buf = append(encoder.aggregator.buf, data[:sep]...)
-				data = data[sep:]
-				if len(encoder.aggregator.buf) == cap(encoder.aggregator.buf) {
-					encoder.flush()
+		case packet = <-encoder.dispatcherQueue:
+			var at = ((chunks * encoder.dispatcher.length) + (encoder.dispatcher.length / perChunk)) % size
+			encoder.dispatcher.buf[at] = packet
+			encoder.dispatcher.length++
+
+			if encoder.dispatcher.length == size {
+				for i := range encoder.dispatcher.buf {
+					if encoder.dispatcher.buf[i] == nil {
+						continue
+					}
+					select {
+					case encoder.resultQueue <- encoder.dispatcher.buf[i].Marshal():
+						encoder.dispatcher.buf[i] = nil
+					}
 				}
+				encoder.dispatcher.length = 0
 			}
-			encoder.aggregator.timer.Reset(encoder.aggregator.timeout)
 		}
 	}
 }
@@ -123,23 +143,58 @@ encode:
 			}
 
 			for i := range data {
-				packet, rem = NewPacket(encoder.encoder.csn, uint32(i), AddrFec, data[i])
+				var kind uint8
+				if encoder.encoder.csn == 1 {
+					kind = 2
+				} else {
+					kind = 1
+				}
+				packet, rem = NewPacket(kind, encoder.encoder.csn, uint32(i), AddrFec, data[i])
 				if rem != nil {
 					log.Printf("encode: NewPacket: res is not nil: len %d", len(rem))
 					continue
 				}
-				encoder.resultQueue <- packet.Marshal()
+
+				select {
+				case encoder.dispatcherQueue <- packet:
+				}
 			}
 			encoder.encoder.csn++
 		}
 	}
 }
 
-func (encoder *Encoder) Encode(ctx context.Context) (in, out chan []byte, err error) {
-	encoder.resultQueue = make(chan []byte, 8*encoder.encoder.data)
-	encoder.encodeQueue = make(chan []byte, 8*encoder.encoder.data)
-	encoder.aggregateQueue = make(chan []byte, 8*encoder.encoder.data)
+func (encoder *Encoder) aggregate(ctx context.Context) {
+	var data []byte
+	var sep int
+	//aggregate:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-encoder.aggregator.timer.C:
+			encoder.aggregatorFlush()
+		case data = <-encoder.aggregateQueue:
+			for len(data) > 0 {
+				sep = min(cap(encoder.aggregator.buf)-len(encoder.aggregator.buf), len(data))
+				encoder.aggregator.buf = append(encoder.aggregator.buf, data[:sep]...)
+				data = data[sep:]
+				if len(encoder.aggregator.buf) == cap(encoder.aggregator.buf) {
+					encoder.aggregatorFlush()
+				}
+			}
+			encoder.aggregator.timer.Reset(encoder.aggregator.timeout)
+		}
+	}
+}
 
+func (encoder *Encoder) Encode(ctx context.Context) (in, out chan []byte, err error) {
+	encoder.resultQueue = make(chan []byte, 8*encoder.dispatcher.chunks)
+	encoder.dispatcherQueue = make(chan *Packet, 8*encoder.dispatcher.chunks)
+	encoder.encodeQueue = make(chan []byte, 64*encoder.encoder.data)
+	encoder.aggregateQueue = make(chan []byte, 64*encoder.encoder.data)
+
+	go encoder.dispatch(ctx)
 	go encoder.aggregate(ctx)
 	go encoder.encode(ctx)
 	go encoder.close(ctx)

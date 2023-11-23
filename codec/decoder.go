@@ -30,6 +30,8 @@ type Decoder struct {
 		err *uint64
 	}
 	dispatcher struct {
+		reset chan struct{}
+
 		size     uint64
 		first    uint64
 		last     uint64
@@ -56,9 +58,10 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	}
 
 	decoder = new(Decoder)
+	decoder.dispatcher.reset = make(chan struct{}, 1)
 	decoder.dispatcher.size = dispatcherSize
 	decoder.dispatcher.awaiting = 1
-	decoder.dispatcher.chunks = make([]*Chunk, dispatcherSize)
+	decoder.dispatcher.chunks = make([]*Chunk, decoder.dispatcher.size)
 	decoder.dispatcher.ok = new(uint64)
 	decoder.dispatcher.err = new(uint64)
 
@@ -73,9 +76,9 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 
 	decoder.assembler.size = assemblerLines * totalParts
 	decoder.assembler.lines = assemblerLines
-	decoder.assembler.found = make([]uint64, assemblerLines)
-	decoder.assembler.csn = make([]uint64, assemblerLines)
-	decoder.assembler.packets = make([]*Packet, assemblerLines*totalParts)
+	decoder.assembler.found = make([]uint64, decoder.assembler.lines)
+	decoder.assembler.csn = make([]uint64, decoder.assembler.lines)
+	decoder.assembler.packets = make([]*Packet, decoder.assembler.lines*decoder.restorer.total)
 	decoder.assembler.ok = new(uint64)
 	decoder.assembler.err = new(uint64)
 
@@ -89,6 +92,11 @@ dispatch:
 		select {
 		case <-ctx.Done():
 			return
+		case <-decoder.dispatcher.reset:
+			decoder.dispatcher.awaiting = 1
+			decoder.dispatcher.first = 0
+			decoder.dispatcher.last = 0
+			decoder.dispatcher.chunks = make([]*Chunk, decoder.dispatcher.size)
 		case chunk = <-decoder.dispatchQueue:
 			if chunk == nil {
 				log.Println("dispatch: dropping invalid chunk: nil chunk")
@@ -115,10 +123,11 @@ dispatch:
 				if decoder.dispatcher.chunks[at] != nil {
 					log.Printf("dispatch: lost: csn: %d", decoder.dispatcher.awaiting)
 					atomic.AddUint64(decoder.dispatcher.err, 1)
-					decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
-					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
-					decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
-
+					select {
+					case decoder.resultQueue <- decoder.dispatcher.chunks[at].Data():
+						decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
+						decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
+					}
 					decoder.dispatcher.chunks[at] = chunk
 				} else {
 					decoder.dispatcher.chunks[at] = chunk
@@ -126,9 +135,11 @@ dispatch:
 					continue dispatch
 				}
 			} else {
-				decoder.resultQueue <- chunk.Data()
-				decoder.dispatcher.last = chunk.csn
-				decoder.dispatcher.awaiting++
+				select {
+				case decoder.resultQueue <- chunk.Data():
+					decoder.dispatcher.last = chunk.csn
+					decoder.dispatcher.awaiting++
+				}
 			}
 
 			var length = decoder.dispatcher.first - decoder.dispatcher.last
@@ -148,10 +159,12 @@ dispatch:
 					continue dispatch
 				}
 
-				decoder.resultQueue <- decoder.dispatcher.chunks[at].Data()
-				decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
-				decoder.dispatcher.awaiting++
-				decoder.dispatcher.chunks[at] = nil
+				select {
+				case decoder.resultQueue <- decoder.dispatcher.chunks[at].Data():
+					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
+					decoder.dispatcher.awaiting++
+					decoder.dispatcher.chunks[at] = nil
+				}
 			}
 			atomic.AddUint64(decoder.dispatcher.ok, 1)
 		}
@@ -189,8 +202,11 @@ restore:
 				continue restore
 			}
 
-			decoder.dispatchQueue <- chunk
-			atomic.AddUint64(decoder.restorer.ok, 1)
+			select {
+			case decoder.dispatchQueue <- chunk:
+				atomic.AddUint64(decoder.restorer.ok, 1)
+				continue restore
+			}
 		}
 	}
 }
@@ -208,76 +224,64 @@ assembly:
 				atomic.AddUint64(decoder.assembler.err, 1)
 				continue assembly
 			}
-
+			if uint64(packet.psn) > decoder.restorer.total {
+				log.Printf("assembly: invalid psn: %d", packet.psn)
+				atomic.AddUint64(decoder.assembler.err, 1)
+				continue assembly
+			}
 			if packet.csn == 0 {
 				log.Println("assembly: dropping invalid packet: csn == 0")
 				atomic.AddUint64(decoder.assembler.err, 1)
 				continue assembly
 			}
-
+			if packet.csn == 1 && packet.kind == 2 {
+				decoder.reset()
+			}
 			if packet.csn <= decoder.assembler.last {
-				if !decoder.assembler.lastOk {
-					log.Printf("assembly: last csn: %d, detached packet: csn: %d, psn: %d", decoder.assembler.last, packet.csn, packet.psn)
-					atomic.AddUint64(decoder.assembler.err, 1)
-				}
 				continue assembly
 			}
 
 			var atPacket = (packet.csn*decoder.restorer.total + uint64(packet.psn)) % decoder.assembler.size
 			var atChunk = packet.csn % decoder.assembler.lines
-			// happy path: pushing into existing chunk line
-			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] == packet.csn {
-				if uint64(packet.psn) > decoder.restorer.total {
-					log.Printf("assembly: invalid psn: %d", packet.psn)
-					atomic.AddUint64(decoder.assembler.err, 1)
-					continue assembly
-				}
+			var chunkStart = packet.csn * decoder.restorer.total % decoder.assembler.size
+			var chunkEnd = ((packet.csn + 1) * decoder.restorer.total) % decoder.assembler.size
+			if chunkEnd == 0 {
+				chunkEnd = decoder.assembler.size
+			}
+
+			switch {
+			case decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] == packet.csn:
+				// happy path: pushing into existing chunk line
 				decoder.assembler.packets[atPacket] = packet
 				decoder.assembler.found[atChunk]++
 
 				if decoder.assembler.found[atChunk] >= decoder.restorer.data {
-					var chunkStart = packet.csn * decoder.restorer.total % decoder.assembler.size
-					var chunkEnd = ((packet.csn + 1) * decoder.restorer.total) % decoder.assembler.size
-					if chunkEnd == 0 {
-						chunkEnd = decoder.assembler.size
-					}
-
 					var data = make([]*Packet, decoder.restorer.total)
 					copy(data, decoder.assembler.packets[chunkStart:chunkEnd])
-					decoder.restoreQueue <- data
 
-					decoder.assembler.last = packet.csn
-					decoder.assembler.lastOk = true
-					for at := chunkStart; at < chunkEnd; at++ {
-						decoder.assembler.packets[at] = nil
+					select {
+					case decoder.restoreQueue <- data:
+						//log.Printf("assembly: pushed chunk: csn: %d", packet.csn)
+						decoder.assembler.last = packet.csn
+						for at := chunkStart; at < chunkEnd; at++ {
+							decoder.assembler.packets[at] = nil
+						}
+						decoder.assembler.found[atChunk] = 0
+						decoder.assembler.csn[atChunk] = 0
 					}
-					decoder.assembler.found[atChunk] = 0
-					decoder.assembler.csn[atChunk] = 0
 				}
-
-				atomic.AddUint64(decoder.assembler.ok, 1)
-				continue assembly
-			}
-
-			// happy path: creating new chunk at unoccupied index
-			if decoder.assembler.found[atChunk] == 0 {
+			case decoder.assembler.found[atChunk] == 0:
+				//log.Printf("assembly: new chunk: csn: %d", packet.csn)
+				// happy path: creating new chunk at unoccupied index
 				decoder.assembler.packets[atPacket] = packet
 				decoder.assembler.csn[atChunk] = packet.csn
 				decoder.assembler.found[atChunk] = 1
-
-				atomic.AddUint64(decoder.assembler.ok, 1)
-				continue assembly
 				// we ignore cases where total = 1 since it is noop in terms of codec
-			}
-
-			if decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] != packet.csn {
-				decoder.assembler.last = decoder.assembler.csn[atChunk]
-				decoder.assembler.lastOk = false
-				log.Printf("assembly: dropping outdated chunk: csn: %d", decoder.assembler.csn[atChunk])
+			case decoder.assembler.found[atChunk] != 0 && decoder.assembler.csn[atChunk] != packet.csn:
+				log.Printf("assembly: dropping chunk: csn: %d -> %d", decoder.assembler.csn[atChunk], packet.csn)
 				atomic.AddUint64(decoder.assembler.err, 1)
 
-				var chunkStart = packet.csn * decoder.restorer.total % decoder.assembler.size
-				var chunkEnd = (packet.csn*decoder.restorer.total + decoder.restorer.total) % decoder.assembler.size
+				decoder.assembler.last = decoder.assembler.csn[atChunk]
 				for at := chunkStart; at < chunkEnd; at++ {
 					decoder.assembler.packets[at] = nil
 				}
@@ -285,14 +289,25 @@ assembly:
 				decoder.assembler.packets[atPacket] = packet
 				decoder.assembler.csn[atChunk] = packet.csn
 				decoder.assembler.found[atChunk] = 1
-
-				atomic.AddUint64(decoder.assembler.ok, 1)
-				continue assembly
+			default:
+				panic("why are we here?")
 			}
-
-			panic("why are we here?")
+			atomic.AddUint64(decoder.assembler.ok, 1)
 		}
 	}
+}
+
+func (decoder *Decoder) reset() {
+	//if decoder.assembler.last != 0 {
+	//	log.Println("decoder: reset")
+	//	decoder.assembler.lastOk = true
+	//	decoder.assembler.last = 0
+	//	decoder.assembler.found = make([]uint64, decoder.assembler.lines)
+	//	decoder.assembler.csn = make([]uint64, decoder.assembler.lines)
+	//	decoder.assembler.packets = make([]*Packet, decoder.assembler.lines*decoder.restorer.total)
+	//
+	//	decoder.dispatcher.reset <- struct{}{}
+	//}
 }
 
 func (decoder *Decoder) decode(ctx context.Context) {
@@ -323,7 +338,10 @@ decode:
 				continue decode
 			}
 
-			decoder.assemblyQueue <- packet
+			select {
+			case decoder.assemblyQueue <- packet:
+				continue decode
+			}
 		}
 	}
 }
@@ -333,6 +351,7 @@ func (decoder *Decoder) close(ctx context.Context) {
 	close(decoder.argumentQueue)
 	close(decoder.assemblyQueue)
 	close(decoder.restoreQueue)
+	close(decoder.dispatchQueue)
 	close(decoder.resultQueue)
 }
 
