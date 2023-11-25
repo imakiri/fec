@@ -155,7 +155,9 @@ func (client *Client) routeIn(ctx context.Context) {
 					log.Printf("routeIn: reader.Read: %v", err)
 					return
 				}
-				decoderIn <- buf[:n]
+				select {
+				case decoderIn <- buf[:n]:
+				}
 			}
 		}
 	}()
@@ -213,8 +215,9 @@ func (client *Client) routeOut(ctx context.Context) {
 				case Listener:
 					client.acceptedLocalAddr = addr
 				}
-
-				encodeIn <- buf[:n]
+				select {
+				case encodeIn <- buf[:n]:
+				}
 			}
 		}
 	}()

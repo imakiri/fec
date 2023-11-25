@@ -115,10 +115,16 @@ var curve = ecdh.P256()
 
 func mustNewPrivateKey(key string) *ecdh.PrivateKey {
 	var prk *ecdh.PrivateKey
+	defer func() {
+		log.Printf("your public key: %x\n", prk.PublicKey().Bytes())
+		clipboard.WriteAll(hex.EncodeToString(prk.PublicKey().Bytes()))
+	}()
+
 	var raw, err = hex.DecodeString(key)
 	if err == nil {
 		prk, err = curve.NewPrivateKey(raw)
 		if err == nil {
+
 			return prk
 		}
 	}
@@ -127,8 +133,6 @@ func mustNewPrivateKey(key string) *ecdh.PrivateKey {
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("your public key: %x\n", prk.PublicKey().Bytes())
-	clipboard.WriteAll(hex.EncodeToString(prk.PublicKey().Bytes()))
 	return prk
 }
 
@@ -142,7 +146,6 @@ func newPublicKey(key string) *ecdh.PublicKey {
 				return puk
 			}
 		}
-		log.Println(err)
 		log.Println("enter public key of a second peer")
 		fmt.Scan(&key)
 	}
