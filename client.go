@@ -152,7 +152,7 @@ func (client *Client) routeIn(ctx context.Context) {
 				buf = make([]byte, udpMax)
 				n, err := client.reader.Read(buf)
 				if err != nil {
-					log.Printf("routeIn: secureReader.Read: %v", err)
+					log.Printf("routeIn: reader.Read: %v", err)
 					return
 				}
 				decoderIn <- buf[:n]
@@ -271,29 +271,54 @@ const (
 	Listener mode = "listener"
 )
 
-func NewClient(mode string, localPort uint16, serverPort uint16, serverAddr string) (*Client, error) {
+type Config struct {
+	Mode       string
+	LocalPort  uint16
+	ServerPort uint16
+	ServerAddr string
+	DataParts  uint64
+	TotalParts uint64
+	Encoder    struct {
+		DispatcherTimeout uint64
+		DispatcherSize    uint64
+	}
+	Decoder struct {
+		AssemblerSize  uint64
+		DispatcherSize uint64
+	}
+}
+
+func NewClient(cfg *Config) (*Client, error) {
 	var router = new(Client)
-	switch mode {
+	switch cfg.Mode {
 	case string(Caller):
 		router.mode = Caller
 	case string(Listener):
 		router.mode = Listener
 	default:
-		return nil, errors.Errorf("invalid mode: %s", mode)
+		return nil, errors.Errorf("invalid mode: %s", cfg.Mode)
 	}
-	const dataParts = 4
-	const totalParts = 8
 	var err error
-	router.encoder, err = codec.NewEncoder(30*time.Millisecond, 16, dataParts, totalParts)
+	router.encoder, err = codec.NewEncoder(
+		time.Duration(cfg.Encoder.DispatcherTimeout)*time.Millisecond,
+		cfg.Encoder.DispatcherSize,
+		cfg.DataParts,
+		cfg.TotalParts,
+	)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.decoder, err = codec.NewDecoder(dataParts, totalParts, 128, 128)
+	router.decoder, err = codec.NewDecoder(
+		cfg.DataParts,
+		cfg.TotalParts,
+		cfg.Decoder.AssemblerSize,
+		cfg.Decoder.DispatcherSize,
+	)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.serverPort = serverPort
-	router.serverAddr = serverAddr
-	router.localPort = localPort
+	router.serverPort = cfg.ServerPort
+	router.serverAddr = cfg.ServerAddr
+	router.localPort = cfg.LocalPort
 	return router, nil
 }

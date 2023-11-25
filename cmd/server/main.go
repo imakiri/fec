@@ -182,6 +182,8 @@ serve:
 	}
 }
 
+const addr = "127.0.0.1:10900"
+
 func (s *Server) Serve(ctx context.Context) error {
 	s.totalReceived = new(uint64)
 	s.totalSent = new(uint64)
@@ -191,7 +193,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		KeepAlive: 0,
 	}
 
-	var server, err = config.ListenPacket(ctx, "udp4", "45.80.209.11:25565")
+	var server, err = config.ListenPacket(ctx, "udp4", addr)
 	if err != nil {
 		return errors.Wrap(err, "config.ListenPacket")
 	}

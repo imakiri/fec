@@ -364,11 +364,11 @@ func (decoder *Decoder) OutgoingSize() uint64 {
 }
 
 func (decoder *Decoder) Decode(ctx context.Context) (in, out chan []byte, err error) {
-	decoder.resultQueue = make(chan []byte, 8)
-	decoder.dispatchQueue = make(chan *Chunk, 4)
-	decoder.restoreQueue = make(chan []*Packet, 4)
-	decoder.assemblyQueue = make(chan *Packet, 8*decoder.restorer.data)
-	decoder.argumentQueue = make(chan []byte, 8*decoder.restorer.data)
+	decoder.resultQueue = make(chan []byte, 16*decoder.restorer.data)
+	decoder.dispatchQueue = make(chan *Chunk, 16)
+	decoder.restoreQueue = make(chan []*Packet, 16*decoder.restorer.data)
+	decoder.assemblyQueue = make(chan *Packet, 16*decoder.restorer.data)
+	decoder.argumentQueue = make(chan []byte, 16*decoder.restorer.data)
 
 	go decoder.dispatch(ctx)
 	go decoder.restore(ctx)

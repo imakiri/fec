@@ -3,21 +3,25 @@ package secure
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"github.com/go-faster/errors"
 	"io"
-	"math/rand"
-	"time"
 )
 
 type Writer struct {
-	unitSize uint16
-	rand     *rand.Rand
-	aead     cipher.AEAD
-	out      io.WriteCloser
-	buf      []byte
+	size  uint16
+	nonce []byte
+	rand  io.Reader
+	aead  cipher.AEAD
+	out   io.Writer
+	buf   []byte
 }
 
-func NewWriter(unitSize uint16, secret []byte, out io.WriteCloser) (*Writer, error) {
+func (w *Writer) Size() uint16 {
+	return w.size + uint16(len(w.nonce)) + BlockSize
+}
+
+func NewWriter(size uint16, secret []byte, out io.Writer) (*Writer, error) {
 	if out == nil {
 		return nil, errors.New("out is nil")
 	}
@@ -33,39 +37,50 @@ func NewWriter(unitSize uint16, secret []byte, out io.WriteCloser) (*Writer, err
 		return nil, errors.Wrap(err, "cipher.NewGCM(c)")
 	}
 
-	if (int(unitSize)+writer.aead.NonceSize())%BlockSize != 0 {
-		return nil, errors.Errorf("invalid unit size: %d", unitSize)
-	}
+	writer.size = size
+	writer.nonce = make([]byte, writer.aead.NonceSize())
+	writer.rand = rand.Reader
 
-	writer.rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	writer.out = out
-	writer.buf = make([]byte, int(unitSize)+writer.aead.NonceSize())
+	writer.buf = make([]byte, writer.Size())
 	return writer, nil
 }
 
-func (w Writer) Write(p []byte) (n int, err error) {
-	var nonce = make([]byte, w.aead.NonceSize())
-	n, err = io.ReadFull(w.rand, nonce)
+func (w *Writer) Write(p []byte) (n int, err error) {
+	if len(p) != int(w.size) {
+		return 0, errors.New("len(p) != int(w.size)")
+	}
+
+	n, err = w.rand.Read(w.nonce)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrap(err, "rand.Read(w.nonce)")
 	}
-	if n != len(nonce) {
-		return 0, errors.New("nonce is not complete")
+	if n != len(w.nonce) {
+		return 0, errors.New("n != len(w.nonce)")
 	}
 
-	var cipherText = w.aead.Seal(p[:0], nonce, p, nil)
+	var data = make([]byte, w.Size())
+	n = copy(data, w.nonce)
+	if n != 12 {
+		return 0, errors.New("n != 12")
+	}
 
-	n, err = w.out.Write(cipherText)
+	w.aead.Seal(data[12:12], w.nonce, p, nil)
+
+	n, err = w.out.Write(data)
 	if err != nil {
 		return n, err
 	}
-	if n != len(cipherText) {
-		return n, errors.Errorf("n != len(cipherText), n: %d, cipher text: %d", n, len(cipherText))
+	if n != len(data) {
+		return n, errors.Errorf("n != len(data), n: %d, cipher text: %d", n, len(data))
 	}
 
 	return n, nil
 }
 
-func (w Writer) Close() error {
-	return w.out.Close()
+func (w *Writer) Close() error {
+	if ww, ok := w.out.(io.Closer); ok {
+		return ww.Close()
+	}
+	return nil
 }

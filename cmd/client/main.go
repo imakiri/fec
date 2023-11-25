@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
+	"fmt"
+	"github.com/atotto/clipboard"
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
 	"github.com/gosuri/uilive"
@@ -106,38 +111,117 @@ func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error)
 	return writer, nil
 }
 
+var curve = ecdh.P256()
+
+func mustNewPrivateKey(key string) *ecdh.PrivateKey {
+	var prk *ecdh.PrivateKey
+	var raw, err = hex.DecodeString(key)
+	if err == nil {
+		prk, err = curve.NewPrivateKey(raw)
+		if err == nil {
+			return prk
+		}
+	}
+	log.Println("generating new private key")
+	prk, err = curve.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("your public key: %x\n", prk.PublicKey().Bytes())
+	clipboard.WriteAll(hex.EncodeToString(prk.PublicKey().Bytes()))
+	return prk
+}
+
+func newPublicKey(key string) *ecdh.PublicKey {
+	var puk *ecdh.PublicKey
+	for {
+		var raw, err = hex.DecodeString(key)
+		if err == nil {
+			puk, err = curve.NewPublicKey(raw)
+			if err == nil {
+				return puk
+			}
+		}
+		log.Println(err)
+		log.Println("enter public key of a second peer")
+		fmt.Scan(&key)
+	}
+}
+
 type Config struct {
-	Mode   string
-	Port   uint16
-	PeerID uuid.UUID
+	PeerID   uuid.UUID
+	Security struct {
+		PrivateKey *ecdh.PrivateKey
+		PublicKey  *ecdh.PublicKey
+	}
+	ClientConfig *fec.Config
 }
 
 func NewConfig(path string) (*Config, error) {
-	f, err := toml.LoadFile(path)
+	var file, err = os.OpenFile(path, os.O_RDWR, 0775)
 	if err != nil {
-		return nil, errors.Wrap(err, "toml.LoadFile(client.cfg)")
+		return nil, errors.Wrap(err, "os.OpenFile")
 	}
 
 	var cfg = new(struct {
-		Mode   string `toml:"mode"`
-		Port   uint16 `toml:"port"`
-		PeerID string `toml:"peer_id"`
+		Peer struct {
+			ID   string `toml:"id"`
+			Mode string `toml:"mode"`
+			Port uint16 `toml:"port"`
+		} `toml:"peer"`
+		FEC struct {
+			DataParts  uint64 `toml:"data_parts"`
+			TotalParts uint64 `toml:"total_parts"`
+		} `toml:"fec"`
+		Server struct {
+			Port uint16 `toml:"port"`
+			Addr string `toml:"addr"`
+		} `toml:"server"`
+		Security struct {
+			PrivateKey string `toml:"private_key"`
+			PublicKey  string `toml:"public_key"`
+		} `toml:"security"`
+		Encoder struct {
+			DispatcherTimeout uint64 `toml:"dispatcher_timeout"`
+			DispatcherSize    uint64 `toml:"dispatcher_size"`
+		} `toml:"encoder"`
+		Decoder struct {
+			AssemblerSize  uint64 `toml:"assembler_size"`
+			DispatcherSize uint64 `toml:"dispatcher_size"`
+		} `toml:"decoder"`
 	})
 
-	err = f.Unmarshal(cfg)
+	err = toml.NewDecoder(file).Decode(cfg)
 	if err != nil {
 		return nil, errors.Wrap(err, "f.Unmarshal(cfg)")
 	}
 
 	var config = new(Config)
-	config.Mode = cfg.Mode
-	config.Port = cfg.Port
-	config.PeerID, err = uuid.FromString(cfg.PeerID)
+	config.ClientConfig = new(fec.Config)
+	config.ClientConfig.Mode = cfg.Peer.Mode
+	config.ClientConfig.LocalPort = cfg.Peer.Port
+	config.ClientConfig.ServerPort = cfg.Server.Port
+	config.ClientConfig.ServerAddr = cfg.Server.Addr
+	config.ClientConfig.TotalParts = cfg.FEC.TotalParts
+	config.ClientConfig.DataParts = cfg.FEC.DataParts
+	config.ClientConfig.Decoder.DispatcherSize = cfg.Decoder.DispatcherSize
+	config.ClientConfig.Decoder.AssemblerSize = cfg.Decoder.AssemblerSize
+	config.ClientConfig.Encoder.DispatcherSize = cfg.Encoder.DispatcherSize
+	config.ClientConfig.Encoder.DispatcherTimeout = cfg.Encoder.DispatcherTimeout
+	config.PeerID, err = uuid.FromString(cfg.Peer.ID)
 	if err != nil {
 		return nil, errors.Wrap(err, "uuid.FromString(cfg.PeerID)")
 	}
 
-	return config, nil
+	file.Seek(0, 0)
+
+	config.Security.PrivateKey = mustNewPrivateKey(cfg.Security.PrivateKey)
+	cfg.Security.PrivateKey = hex.EncodeToString(config.Security.PrivateKey.Bytes())
+
+	config.Security.PublicKey = newPublicKey(cfg.Security.PublicKey)
+	cfg.Security.PublicKey = hex.EncodeToString(config.Security.PublicKey.Bytes())
+
+	return config, toml.NewEncoder(file).Encode(cfg)
 }
 
 func main() {
@@ -154,13 +238,7 @@ func main() {
 		log.Fatalln(errors.Wrap(err, "NewConfig"))
 	}
 
-	//var secret, err = fec.Secret()
-	//if err != nil {
-	//	log.Fatalln(errors.Wrap(err, "secret()"))
-	//}
-	//log.Printf("your common secret: %x", secret)
-
-	client, err := fec.NewClient(config.Mode, config.Port, 25565, "45.80.209.11")
+	client, err := fec.NewClient(config.ClientConfig)
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "fec.NewClient"))
 	}
@@ -168,8 +246,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
 
-	handler, err := NewHandler(output, nil)
-	//handler, err := NewHandler(secret)
+	secret, err := config.Security.PrivateKey.ECDH(config.Security.PublicKey)
+	if err != nil {
+		log.Fatalln(errors.Wrap(err, "ECDH"))
+	}
+	log.Printf("your common secret: %x", secret)
+
+	handler, err := NewHandler(output, secret)
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "NewHandler"))
 	}
