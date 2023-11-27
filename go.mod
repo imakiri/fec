@@ -1,4 +1,4 @@
-module github.com/imakiri/fec
+module github.com/imakiri/stream
 
 go 1.21.0
 

@@ -6,7 +6,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
 	"github.com/gosuri/uilive"
-	"github.com/imakiri/fec"
+	"github.com/imakiri/stream/src"
 	"log"
 	"net"
 	"os"
@@ -109,7 +109,7 @@ func (s *Server) checkHandshake(buf []byte) uuid.UUID {
 	}
 
 	for i := 0; i < 16; i++ {
-		if buf[i] != fec.UID[i] {
+		if buf[i] != src.UID[i] {
 			return uuid.Nil
 		}
 	}

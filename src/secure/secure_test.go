@@ -3,7 +3,7 @@ package secure
 import (
 	"bytes"
 	"crypto/rand"
-	"github.com/imakiri/fec/codec"
+	"github.com/imakiri/stream/src/codec"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

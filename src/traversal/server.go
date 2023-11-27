@@ -2,9 +2,9 @@ package traversal
 
 import (
 	"github.com/gofrs/uuid/v5"
-	"github.com/imakiri/fec"
-	"github.com/imakiri/fec/buffer"
-	"github.com/imakiri/fec/erres"
+	"github.com/imakiri/stream/src"
+	"github.com/imakiri/stream/src/buffer"
+	"github.com/imakiri/stream/src/erres"
 	"log"
 )
 
@@ -37,7 +37,7 @@ func (s *Server) serveHandshake(inv Invocation) error {
 	}
 
 	for i := 0; i < 16; i++ {
-		if data[i] != fec.UID[i] {
+		if data[i] != src.UID[i] {
 			return ErrInvalidData
 		}
 	}

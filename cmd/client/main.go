@@ -11,10 +11,10 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
 	"github.com/gosuri/uilive"
-	"github.com/imakiri/fec"
-	"github.com/imakiri/fec/codec"
-	"github.com/imakiri/fec/observer"
-	"github.com/imakiri/fec/secure"
+	"github.com/imakiri/stream/src"
+	"github.com/imakiri/stream/src/codec"
+	observer2 "github.com/imakiri/stream/src/observer"
+	secure2 "github.com/imakiri/stream/src/secure"
 	"github.com/pelletier/go-toml"
 	"io"
 	"log"
@@ -66,12 +66,12 @@ func NewHandler(output *uilive.Writer, secret []byte) (*Handler, error) {
 }
 
 func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) {
-	reporter, err := fec.NewReporter(h.readerOutput, "in ")
+	reporter, err := src.NewReporter(h.readerOutput, "in ")
 	if err != nil {
 		return nil, errors.Wrap(err, "fec.NewReporter")
 	}
 
-	reader, err = observer.NewReader(server, reporter, time.Second)
+	reader, err = observer2.NewReader(server, reporter, time.Second)
 	if err != nil {
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
@@ -79,7 +79,7 @@ func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) 
 	//reader = unit.NewReader(reader, codec.PacketSize, true, false)
 
 	if h.secret != nil {
-		reader, err = secure.NewReader(codec.PacketSize, h.secret, reader)
+		reader, err = secure2.NewReader(codec.PacketSize, h.secret, reader)
 		if err != nil {
 			return nil, errors.Wrap(err, "secure.NewReader")
 		}
@@ -89,12 +89,12 @@ func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) 
 }
 
 func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error) {
-	reporter, err := fec.NewReporter(h.writerOutput, "out")
+	reporter, err := src.NewReporter(h.writerOutput, "out")
 	if err != nil {
 		return nil, errors.Wrap(err, "fec.NewReporter")
 	}
 
-	writer, err = observer.NewWriter(server, reporter, time.Second)
+	writer, err = observer2.NewWriter(server, reporter, time.Second)
 	if err != nil {
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
@@ -102,7 +102,7 @@ func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error)
 	//writer = unit.NewWriter(writer, codec.PacketDataSize, false, true)
 
 	if h.secret != nil {
-		writer, err = secure.NewWriter(codec.PacketSize, h.secret, writer)
+		writer, err = secure2.NewWriter(codec.PacketSize, h.secret, writer)
 		if err != nil {
 			return nil, errors.Wrap(err, "secure.NewWriter")
 		}
@@ -157,7 +157,7 @@ type Config struct {
 		PrivateKey *ecdh.PrivateKey
 		PublicKey  *ecdh.PublicKey
 	}
-	ClientConfig *fec.Config
+	ClientConfig *src.Config
 }
 
 func NewConfig(path string) (*Config, error) {
@@ -200,7 +200,7 @@ func NewConfig(path string) (*Config, error) {
 	}
 
 	var config = new(Config)
-	config.ClientConfig = new(fec.Config)
+	config.ClientConfig = new(src.Config)
 	config.ClientConfig.Mode = cfg.Peer.Mode
 	config.ClientConfig.LocalPort = cfg.Peer.Port
 	config.ClientConfig.ServerPort = cfg.Server.Port
@@ -241,7 +241,7 @@ func main() {
 		log.Fatalln(errors.Wrap(err, "NewConfig"))
 	}
 
-	client, err := fec.NewClient(config.ClientConfig)
+	client, err := src.NewClient(config.ClientConfig)
 	if err != nil {
 		log.Fatalln(errors.Wrap(err, "fec.NewClient"))
 	}

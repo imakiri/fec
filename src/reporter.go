@@ -1,4 +1,4 @@
-package fec
+package src
 
 import (
 	"fmt"

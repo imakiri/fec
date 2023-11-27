@@ -1,4 +1,4 @@
-package fec
+package src
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
-	"github.com/imakiri/fec/codec"
+	codec2 "github.com/imakiri/stream/src/codec"
 	"io"
 	"log"
 	"net"
@@ -26,8 +26,8 @@ type Client struct {
 
 	acceptedLocalAddr *net.UDPAddr
 
-	decoder *codec.Decoder
-	encoder *codec.Encoder
+	decoder *codec2.Decoder
+	encoder *codec2.Encoder
 
 	writer io.WriteCloser
 	reader io.ReadCloser
@@ -82,7 +82,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		log.Println("local caller to", client.localConn.RemoteAddr().String())
 	}
 
-	client.localConn.SetWriteBuffer(20 * (codec.PacketSize + 12))
+	client.localConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
 
 	var dialer = net.Dialer{
 		Timeout:        0,
@@ -105,7 +105,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		return errors.New("connect: connection.(*net.UDPConn) is not ok")
 	}
 
-	client.serverConn.SetReadBuffer(20 * (codec.PacketSize + 12))
+	client.serverConn.SetReadBuffer(20 * (codec2.PacketSize + 12))
 	go func() {
 		<-ctx.Done()
 		client.serverConn.Close()
@@ -302,7 +302,7 @@ func NewClient(cfg *Config) (*Client, error) {
 		return nil, errors.Errorf("invalid mode: %s", cfg.Mode)
 	}
 	var err error
-	router.encoder, err = codec.NewEncoder(
+	router.encoder, err = codec2.NewEncoder(
 		time.Duration(cfg.Encoder.DispatcherTimeout)*time.Millisecond,
 		cfg.Encoder.DispatcherSize,
 		cfg.DataParts,
@@ -311,7 +311,7 @@ func NewClient(cfg *Config) (*Client, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.decoder, err = codec.NewDecoder(
+	router.decoder, err = codec2.NewDecoder(
 		cfg.DataParts,
 		cfg.TotalParts,
 		cfg.Decoder.AssemblerSize,
