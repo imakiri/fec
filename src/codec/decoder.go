@@ -124,6 +124,8 @@ dispatch:
 					log.Printf("dispatch: lost: csn: %d", decoder.dispatcher.awaiting)
 					atomic.AddUint64(decoder.dispatcher.err, 1)
 					select {
+					case <-ctx.Done():
+						return
 					case decoder.resultQueue <- decoder.dispatcher.chunks[at].Data():
 						decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 						decoder.dispatcher.awaiting = decoder.dispatcher.chunks[at].csn + 1
@@ -136,6 +138,8 @@ dispatch:
 				}
 			} else {
 				select {
+				case <-ctx.Done():
+					return
 				case decoder.resultQueue <- chunk.Data():
 					decoder.dispatcher.last = chunk.csn
 					decoder.dispatcher.awaiting++
@@ -160,6 +164,8 @@ dispatch:
 				}
 
 				select {
+				case <-ctx.Done():
+					return
 				case decoder.resultQueue <- decoder.dispatcher.chunks[at].Data():
 					decoder.dispatcher.last = decoder.dispatcher.chunks[at].csn
 					decoder.dispatcher.awaiting++
@@ -203,6 +209,8 @@ restore:
 			}
 
 			select {
+			case <-ctx.Done():
+				return
 			case decoder.dispatchQueue <- chunk:
 				atomic.AddUint64(decoder.restorer.ok, 1)
 				continue restore
@@ -260,6 +268,8 @@ assembly:
 					copy(data, decoder.assembler.packets[chunkStart:chunkEnd])
 
 					select {
+					case <-ctx.Done():
+						return
 					case decoder.restoreQueue <- data:
 						//log.Printf("assembly: pushed chunk: csn: %d", packet.csn)
 						decoder.assembler.last = packet.csn
@@ -339,6 +349,8 @@ decode:
 			}
 
 			select {
+			case <-ctx.Done():
+				return
 			case decoder.assemblyQueue <- packet:
 				continue decode
 			}

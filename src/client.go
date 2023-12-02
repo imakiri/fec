@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -18,13 +19,14 @@ const udpMax = 1472
 var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
 type Client struct {
-	mode      mode
-	localPort uint16
+	portCaller   uint16
+	portListener uint16
 
 	serverPort uint16
 	serverAddr string
 
-	acceptedLocalAddr *net.UDPAddr
+	acceptedLocalAddrMu *sync.Cond
+	acceptedLocalAddr   *net.UDPAddr
 
 	decoder *codec2.Decoder
 	encoder *codec2.Encoder
@@ -32,31 +34,34 @@ type Client struct {
 	writer io.WriteCloser
 	reader io.ReadCloser
 
-	serverConn *net.UDPConn
-	localConn  *net.UDPConn
+	serverConn   *net.UDPConn
+	callerConn   *net.UDPConn
+	listenerConn *net.UDPConn
 }
 
 func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 	var ok bool
-	switch client.mode {
-	case Listener:
+
+	{
 		var localConfig = net.ListenConfig{
 			Control:   nil,
 			KeepAlive: 0,
 		}
 
-		var listener, err = localConfig.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.localPort))
+		var listener, err = localConfig.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.portListener))
 		if err != nil {
 			return errors.Wrap(err, "connect: localConfig.ListenPacket")
 		}
 
-		client.localConn, ok = listener.(*net.UDPConn)
+		client.listenerConn, ok = listener.(*net.UDPConn)
 		if !ok {
 			return errors.New("connect: listener.(*net.UDPConn) is not ok")
 		}
 
-		log.Println("local listener at", client.localConn.LocalAddr().String())
-	case Caller:
+		log.Println("local listener at", client.listenerConn.LocalAddr().String())
+		client.listenerConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
+	}
+	{
 		var dialer = net.Dialer{
 			Timeout:        0,
 			Deadline:       time.Time{},
@@ -68,21 +73,20 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 			ControlContext: nil,
 		}
 
-		var dial, err = dialer.DialContext(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.localPort))
+		var caller, err = dialer.DialContext(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", client.portCaller))
 		if err != nil {
-			return errors.Wrap(err, "connect: localConfig.ListenPacket")
+			return errors.Wrap(err, "connect: dialer.DialContext")
 		}
 
 		var ok bool
-		client.localConn, ok = dial.(*net.UDPConn)
+		client.callerConn, ok = caller.(*net.UDPConn)
 		if !ok {
-			return errors.New("connect: listener.(*net.UDPConn) is not ok")
+			return errors.New("connect: caller.(*net.UDPConn) is not ok")
 		}
 
-		log.Println("local caller to", client.localConn.RemoteAddr().String())
+		log.Println("local caller to", client.callerConn.RemoteAddr().String())
+		client.callerConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
 	}
-
-	client.localConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
 
 	var dialer = net.Dialer{
 		Timeout:        0,
@@ -109,7 +113,8 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 	go func() {
 		<-ctx.Done()
 		client.serverConn.Close()
-		client.localConn.Close()
+		client.callerConn.Close()
+		client.listenerConn.Close()
 	}()
 
 	var handshake = append(UID, peerID.Bytes()...)
@@ -156,32 +161,31 @@ func (client *Client) routeIn(ctx context.Context) {
 					return
 				}
 				select {
+				case <-ctx.Done():
+					return
 				case decoderIn <- buf[:n]:
 				}
 			}
 		}
 	}()
 	go func() {
-		var buf = make([]byte, udpMax)
+		var buf []byte
 		var err error
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case buf = <-decoderOut:
-				switch client.mode {
-				case Caller:
-					_, err = client.localConn.Write(buf)
+				_, err = client.callerConn.Write(buf)
+				if err != nil {
+					log.Printf("routeIn: callerConn.Write: %v", err)
+					return
+				}
+
+				if client.acceptedLocalAddr != nil {
+					_, err = client.listenerConn.WriteToUDP(buf, client.acceptedLocalAddr)
 					if err != nil {
-						log.Printf("routeIn: localConn.Write: %v", err)
-						return
-					}
-				case Listener:
-					for client.acceptedLocalAddr == nil {
-					}
-					_, err = client.localConn.WriteToUDP(buf, client.acceptedLocalAddr)
-					if err != nil {
-						log.Printf("routeIn: localConn.Write: %v", err)
+						log.Printf("routeIn: callerConn.Write: %v", err)
 						return
 					}
 				}
@@ -204,18 +208,17 @@ func (client *Client) routeOut(ctx context.Context) {
 				return
 			default:
 				buf = make([]byte, udpMax)
-				n, addr, err = client.localConn.ReadFromUDP(buf)
+				n, addr, err = client.listenerConn.ReadFromUDP(buf)
 				if err != nil {
-					log.Printf("routeOut: localConn.ReadFromUDP: %v", err)
+					log.Printf("routeOut: listenerConn.ReadFromUDP: %v", err)
 					return
 				}
 
-				switch client.mode {
-				case Caller:
-				case Listener:
-					client.acceptedLocalAddr = addr
-				}
+				client.acceptedLocalAddr = addr
+
 				select {
+				case <-ctx.Done():
+					return
 				case encodeIn <- buf[:n]:
 				}
 			}
@@ -231,7 +234,7 @@ func (client *Client) routeOut(ctx context.Context) {
 			case buf = <-encoderOut:
 				_, err = client.writer.Write(buf)
 				if err != nil {
-					log.Printf("routeOut: serverConn.Write: %v", err)
+					log.Printf("routeOut: writer.Write: %v", err)
 					return
 				}
 			}
@@ -267,21 +270,21 @@ func (client *Client) Run(ctx context.Context, peerID uuid.UUID, handler Handler
 	return nil
 }
 
-type mode string
-
-const (
-	Caller   mode = "caller"
-	Listener mode = "listener"
-)
-
 type Config struct {
-	Mode       string
-	LocalPort  uint16
-	ServerPort uint16
-	ServerAddr string
-	DataParts  uint64
-	TotalParts uint64
-	Encoder    struct {
+	Peer struct {
+		ID           string
+		PortCaller   uint16
+		PortListener uint16
+	}
+	Server struct {
+		Port uint16
+		Addr string
+	}
+	Fec struct {
+		DataParts  uint64
+		TotalParts uint64
+	}
+	Encoder struct {
 		DispatcherTimeout uint64
 		DispatcherSize    uint64
 	}
@@ -292,36 +295,30 @@ type Config struct {
 }
 
 func NewClient(cfg *Config) (*Client, error) {
-	var router = new(Client)
-	switch cfg.Mode {
-	case string(Caller):
-		router.mode = Caller
-	case string(Listener):
-		router.mode = Listener
-	default:
-		return nil, errors.Errorf("invalid mode: %s", cfg.Mode)
-	}
+	var client = new(Client)
 	var err error
-	router.encoder, err = codec2.NewEncoder(
+	client.encoder, err = codec2.NewEncoder(
 		time.Duration(cfg.Encoder.DispatcherTimeout)*time.Millisecond,
 		cfg.Encoder.DispatcherSize,
-		cfg.DataParts,
-		cfg.TotalParts,
+		cfg.Fec.DataParts,
+		cfg.Fec.TotalParts,
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.decoder, err = codec2.NewDecoder(
-		cfg.DataParts,
-		cfg.TotalParts,
+	client.decoder, err = codec2.NewDecoder(
+		cfg.Fec.DataParts,
+		cfg.Fec.TotalParts,
 		cfg.Decoder.AssemblerSize,
 		cfg.Decoder.DispatcherSize,
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "codec.NewEncoder")
 	}
-	router.serverPort = cfg.ServerPort
-	router.serverAddr = cfg.ServerAddr
-	router.localPort = cfg.LocalPort
-	return router, nil
+	client.serverPort = cfg.Server.Port
+	client.serverAddr = cfg.Server.Addr
+	client.portCaller = cfg.Peer.PortCaller
+	client.portListener = cfg.Peer.PortListener
+	client.acceptedLocalAddrMu = sync.NewCond(new(sync.Mutex))
+	return client, nil
 }

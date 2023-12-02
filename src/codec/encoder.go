@@ -6,11 +6,13 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/klauspost/reedsolomon"
 	"log"
+	"sync"
 	"time"
 )
 
 type Encoder struct {
 	aggregator struct {
+		mu      *sync.Mutex
 		timeout time.Duration
 		timer   *time.Timer
 		buf     []byte
@@ -51,6 +53,7 @@ func NewEncoder(aggrtTimeout time.Duration, dispatcherSize, dataParts, totalPart
 		return nil, err
 	}
 
+	encoder.aggregator.mu = new(sync.Mutex)
 	encoder.aggregator.buf = make([]byte, 0, encoder.IncomingSize())
 	encoder.aggregator.timeout = aggrtTimeout
 	encoder.aggregator.timer = time.NewTimer(100000000 * time.Second)
@@ -77,12 +80,18 @@ func (encoder *Encoder) OutgoingSize() uint64 {
 	return PacketSize
 }
 
-func (encoder *Encoder) aggregatorFlush() {
+func (encoder *Encoder) aggregatorFlush(ctx context.Context) {
+	encoder.aggregator.mu.Lock()
+	defer encoder.aggregator.mu.Unlock()
+
 	var agData = make([]byte, len(encoder.aggregator.buf))
 	copy(agData, encoder.aggregator.buf)
 	encoder.aggregator.buf = encoder.aggregator.buf[0:0]
 	select {
+	case <-ctx.Done():
+		return
 	case encoder.encodeQueue <- agData:
+		return
 	}
 }
 
@@ -107,6 +116,8 @@ func (encoder *Encoder) dispatch(ctx context.Context) {
 						continue
 					}
 					select {
+					case <-ctx.Done():
+						return
 					case encoder.resultQueue <- encoder.dispatcher.buf[i].Marshal():
 						encoder.dispatcher.buf[i] = nil
 					}
@@ -156,6 +167,8 @@ encode:
 				}
 
 				select {
+				case <-ctx.Done():
+					return
 				case encoder.dispatcherQueue <- packet:
 				}
 			}
@@ -173,14 +186,14 @@ func (encoder *Encoder) aggregate(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-encoder.aggregator.timer.C:
-			encoder.aggregatorFlush()
+			encoder.aggregatorFlush(ctx)
 		case data = <-encoder.aggregateQueue:
 			for len(data) > 0 {
 				sep = min(cap(encoder.aggregator.buf)-len(encoder.aggregator.buf), len(data))
 				encoder.aggregator.buf = append(encoder.aggregator.buf, data[:sep]...)
 				data = data[sep:]
 				if len(encoder.aggregator.buf) == cap(encoder.aggregator.buf) {
-					encoder.aggregatorFlush()
+					encoder.aggregatorFlush(ctx)
 				}
 			}
 			encoder.aggregator.timer.Reset(encoder.aggregator.timeout)

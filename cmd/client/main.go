@@ -168,11 +168,11 @@ func NewConfig(path string) (*Config, error) {
 
 	var cfg = new(struct {
 		Peer struct {
-			ID   string `toml:"id"`
-			Mode string `toml:"mode"`
-			Port uint16 `toml:"port"`
+			ID           string `toml:"id"`
+			PortCaller   uint16 `toml:"port_caller"`
+			PortListener uint16 `toml:"port_listener"`
 		} `toml:"peer"`
-		FEC struct {
+		Fec struct {
 			DataParts  uint64 `toml:"data_parts"`
 			TotalParts uint64 `toml:"total_parts"`
 		} `toml:"fec"`
@@ -201,12 +201,12 @@ func NewConfig(path string) (*Config, error) {
 
 	var config = new(Config)
 	config.ClientConfig = new(src.Config)
-	config.ClientConfig.Mode = cfg.Peer.Mode
-	config.ClientConfig.LocalPort = cfg.Peer.Port
-	config.ClientConfig.ServerPort = cfg.Server.Port
-	config.ClientConfig.ServerAddr = cfg.Server.Addr
-	config.ClientConfig.TotalParts = cfg.FEC.TotalParts
-	config.ClientConfig.DataParts = cfg.FEC.DataParts
+	config.ClientConfig.Peer.PortCaller = cfg.Peer.PortCaller
+	config.ClientConfig.Peer.PortListener = cfg.Peer.PortListener
+	config.ClientConfig.Server.Port = cfg.Server.Port
+	config.ClientConfig.Server.Addr = cfg.Server.Addr
+	config.ClientConfig.Fec.TotalParts = cfg.Fec.TotalParts
+	config.ClientConfig.Fec.DataParts = cfg.Fec.DataParts
 	config.ClientConfig.Decoder.DispatcherSize = cfg.Decoder.DispatcherSize
 	config.ClientConfig.Decoder.AssemblerSize = cfg.Decoder.AssemblerSize
 	config.ClientConfig.Encoder.DispatcherSize = cfg.Encoder.DispatcherSize
