@@ -2,7 +2,7 @@ package observer
 
 import (
 	"bytes"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -42,34 +42,34 @@ func TestReader(t *testing.T) {
 
 	var rep = newTestReporter()
 	var reader, err = NewReader(src, rep, time.Second)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	time.Sleep(500 * time.Millisecond)
 	t.Log(rep.data)
 
 	var buf0 = [][2]uint64{{0, 0}}
-	assert.Equal(t, buf0, rep.data)
+	require.Equal(t, buf0, rep.data)
 
 	var buf = make([]byte, 3)
 	var n int
 
 	n, err = reader.Read(buf)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, n)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
 
 	time.Sleep(time.Second)
 	t.Log(rep.data)
 
 	var buf1 = [][2]uint64{{0, 0}, {3, 3}}
-	assert.Equal(t, buf1, rep.data)
+	require.Equal(t, buf1, rep.data)
 
 	n, err = reader.Read(buf)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, n)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
 
 	time.Sleep(time.Second)
 	t.Log(rep.data)
 
 	var buf2 = [][2]uint64{{0, 0}, {3, 3}, {6, 3}}
-	assert.Equal(t, buf2, rep.data)
+	require.Equal(t, buf2, rep.data)
 }

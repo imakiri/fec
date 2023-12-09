@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,20 +26,20 @@ func TestCodec(t *testing.T) {
 	var decoder *Decoder
 
 	encoder, err = NewEncoder(20*time.Millisecond, 32, dataParts, totalParts)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	decoder, err = NewDecoder(dataParts, totalParts, 128, 16)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	encoderIn, encoderOut, err := encoder.Encode(ctx)
-	assert.NoError(t, err)
-	assert.NotNil(t, encoderIn)
-	assert.NotNil(t, encoderOut)
+	require.NoError(t, err)
+	require.NotNil(t, encoderIn)
+	require.NotNil(t, encoderOut)
 
 	decoderIn, decoderOut, err := decoder.Decode(ctx)
-	assert.NoError(t, err)
-	assert.NotNil(t, decoderIn)
-	assert.NotNil(t, decoderOut)
+	require.NoError(t, err)
+	require.NotNil(t, decoderIn)
+	require.NotNil(t, decoderOut)
 
 	var wg = new(sync.WaitGroup)
 	const chunks = 32
@@ -50,12 +50,12 @@ func TestCodec(t *testing.T) {
 			var buf = make([]byte, size)
 
 			n, err := rand.Read(buf)
-			assert.NoError(t, err)
-			assert.EqualValues(t, size, n)
+			require.NoError(t, err)
+			require.EqualValues(t, size, n)
 
 			n, err = expecting.Write(buf)
-			assert.NoError(t, err)
-			assert.EqualValues(t, size, n)
+			require.NoError(t, err)
+			require.EqualValues(t, size, n)
 
 			encoderIn <- buf
 		}
@@ -87,7 +87,7 @@ func TestCodec(t *testing.T) {
 				// no packet loss for now
 				packet = new(Packet)
 				ok = packet.Unmarshal(data)
-				assert.True(t, ok)
+				require.True(t, ok)
 				//t.Log(packet)
 				select {
 				case decoderIn <- data:
@@ -107,8 +107,8 @@ func TestCodec(t *testing.T) {
 				return
 			case data = <-decoderOut:
 				var n, err = got.Write(data)
-				assert.NoError(t, err)
-				assert.EqualValues(t, len(data), n)
+				require.NoError(t, err)
+				require.EqualValues(t, len(data), n)
 			}
 		}
 		wg.Done()
@@ -118,6 +118,6 @@ func TestCodec(t *testing.T) {
 	t.Log(got.Bytes()[20])
 	t.Log(expecting.Bytes()[20])
 
-	assert.EqualValues(t, expecting.Len(), got.Len())
-	assert.EqualValues(t, expecting.Bytes(), got.Bytes())
+	require.EqualValues(t, expecting.Len(), got.Len())
+	require.EqualValues(t, expecting.Bytes(), got.Bytes())
 }

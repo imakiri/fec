@@ -4,34 +4,35 @@ import (
 	"context"
 	"fmt"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strconv"
 	"testing"
 )
 
-func assertPackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint64]map[uint64][]byte) {
+func requirePackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint64]map[uint64][]byte) {
 	var expectPackets, ok = expect[csn]
 	if !ok {
-		assert.Fail(t, "invalid test data")
+		require.Fail(t, "invalid test data")
 		t.Fatal()
 	}
 
 	for i := range packets {
 		var value, ok = expectPackets[uint64(i)]
 		if ok && packets[i] == nil {
-			assert.Fail(t, fmt.Sprintf("expect packet at csn: %d, psn: %d", csn, i), packets)
+			require.Fail(t, fmt.Sprintf("expect packet at csn: %d, psn: %d", csn, i), packets)
 			t.Fatal()
 		}
 		if !ok && packets[i] != nil {
-			assert.Fail(t, fmt.Sprintf("did not expect packet at csn: %d, psn: %d", csn, i), packets)
+			require.Fail(t, fmt.Sprintf("did not expect packet at csn: %d, psn: %d", csn, i), packets)
 			t.Fatal()
 		}
 		if !ok && packets[i] == nil {
 			continue
 		}
 		if ok && packets[i] != nil {
-			assert.EqualValues(t, packets[i].csn, csn)
+			require.EqualValues(t, packets[i].csn, csn)
 			for j := range value {
-				assert.EqualValues(t, value[j], packets[i].data[j])
+				require.EqualValues(t, value[j], packets[i].data[j])
 			}
 			continue
 		}
@@ -50,7 +51,7 @@ func casePacket(csn, psn uint64, expect map[uint64]map[uint64][]byte) *Packet {
 
 func TestAssembler(t *testing.T) {
 	var decoder, err = NewDecoder(4, 6, 3, 4)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
@@ -68,7 +69,7 @@ func TestAssembler(t *testing.T) {
 	decoder.assemblyQueue <- casePacket(1, 4, expect)
 
 	packets = <-decoder.restoreQueue
-	assertPackets(t, packets, 1, expect)
+	requirePackets(t, packets, 1, expect)
 
 	decoder.assemblyQueue <- casePacket(2, 0, expect)
 	decoder.assemblyQueue <- casePacket(3, 1, expect)
@@ -80,10 +81,10 @@ func TestAssembler(t *testing.T) {
 	decoder.assemblyQueue <- casePacket(3, 3, expect)
 
 	packets = <-decoder.restoreQueue
-	assertPackets(t, packets, 2, expect)
+	requirePackets(t, packets, 2, expect)
 
 	packets = <-decoder.restoreQueue
-	assertPackets(t, packets, 3, expect)
+	requirePackets(t, packets, 3, expect)
 
 	decoder.assemblyQueue <- casePacket(4, 0, expect)
 	decoder.assemblyQueue <- casePacket(5, 1, expect)
@@ -96,14 +97,14 @@ func TestAssembler(t *testing.T) {
 	decoder.assemblyQueue <- casePacket(9, 1, expect)
 
 	packets = <-decoder.restoreQueue
-	assertPackets(t, packets, 9, expect)
+	requirePackets(t, packets, 9, expect)
 }
 
 func TestRestorer(t *testing.T) {
 	const dataParts = 4
 	const totalParts = 6
 	var decoder, err = NewDecoder(dataParts, totalParts, 3, 4)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
@@ -123,7 +124,7 @@ func TestRestorer(t *testing.T) {
 	buf = chunkExpected.Marshal(6)
 
 	err = decoder.restorer.rs.Encode(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	for i := range buf {
 		packet, rem = NewPacket(1, 1, uint32(i), AddrFec, buf[i])

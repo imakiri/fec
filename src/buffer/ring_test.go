@@ -1,7 +1,7 @@
 package buffer
 
 import (
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -23,41 +23,41 @@ func TestRing(t *testing.T) {
 		a0 = false
 	}()
 	time.Sleep(10 * time.Millisecond)
-	assert.True(t, a0)
+	require.True(t, a0)
 
 	i, ok = ring.Read(true)
-	assert.True(t, ok)
-	assert.EqualValues(t, 1, i)
+	require.True(t, ok)
+	require.EqualValues(t, 1, i)
 	time.Sleep(10 * time.Millisecond)
-	assert.False(t, a0)
+	require.False(t, a0)
 
 	i, ok = ring.Read(true)
-	assert.True(t, ok)
-	assert.EqualValues(t, 2, i)
+	require.True(t, ok)
+	require.EqualValues(t, 2, i)
 
 	i, ok = ring.Read(true)
-	assert.True(t, ok)
-	assert.EqualValues(t, 3, i)
+	require.True(t, ok)
+	require.EqualValues(t, 3, i)
 
 	i, ok = ring.Read(true)
-	assert.True(t, ok)
-	assert.EqualValues(t, 4, i)
+	require.True(t, ok)
+	require.EqualValues(t, 4, i)
 
 	i, ok = ring.Read(true)
-	assert.True(t, ok)
-	assert.EqualValues(t, 5, i)
+	require.True(t, ok)
+	require.EqualValues(t, 5, i)
 
 	var a1 = true
 	go func() {
 		i, ok = ring.Read(true)
-		assert.True(t, ok)
-		assert.EqualValues(t, 6, i)
+		require.True(t, ok)
+		require.EqualValues(t, 6, i)
 		a1 = false
 	}()
 	time.Sleep(10 * time.Millisecond)
-	assert.True(t, a1)
+	require.True(t, a1)
 
 	ring.Write(false, 6)
 	time.Sleep(10 * time.Millisecond)
-	assert.False(t, a1)
+	require.False(t, a1)
 }
