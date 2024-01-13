@@ -76,10 +76,10 @@ func (h *Handler) Reader(server *net.UDPConn) (reader io.ReadCloser, err error) 
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
 
-	//reader = unit.NewReader(reader, codec.PacketSize, true, false)
+	//reader = unit.NewReader(reader, codec.PacketV2Size, true, false)
 
 	if h.secret != nil {
-		reader, err = secure2.NewReader(codec.PacketSize, h.secret, reader)
+		reader, err = secure2.NewReader(codec.PacketV2Size, h.secret, reader)
 		if err != nil {
 			return nil, errors.Wrap(err, "secure.NewReader")
 		}
@@ -99,10 +99,10 @@ func (h *Handler) Writer(server *net.UDPConn) (writer io.WriteCloser, err error)
 		return nil, errors.Wrap(err, "observer.NewWriter")
 	}
 
-	//writer = unit.NewWriter(writer, codec.PacketDataSize, false, true)
+	//writer = unit.NewWriter(writer, codec.PacketV2DataSize, false, true)
 
 	if h.secret != nil {
-		writer, err = secure2.NewWriter(codec.PacketSize, h.secret, writer)
+		writer, err = secure2.NewWriter(codec.PacketV2Size, h.secret, writer)
 		if err != nil {
 			return nil, errors.Wrap(err, "secure.NewWriter")
 		}

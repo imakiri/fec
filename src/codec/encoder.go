@@ -26,12 +26,12 @@ type Encoder struct {
 	dispatcher struct {
 		length uint64
 		chunks uint64
-		buf    []*Packet
+		buf    []*PacketV2
 	}
 
 	aggregateQueue  chan []byte
 	encodeQueue     chan []byte
-	dispatcherQueue chan *Packet
+	dispatcherQueue chan *PacketV2
 	resultQueue     chan []byte
 }
 
@@ -59,7 +59,7 @@ func NewEncoder(aggrtTimeout time.Duration, dispatcherSize, dataParts, totalPart
 	encoder.aggregator.timer = time.NewTimer(100000000 * time.Second)
 
 	encoder.dispatcher.chunks = dispatcherSize
-	encoder.dispatcher.buf = make([]*Packet, totalParts*dispatcherSize)
+	encoder.dispatcher.buf = make([]*PacketV2, totalParts*dispatcherSize)
 
 	return encoder, nil
 }
@@ -73,11 +73,11 @@ func (encoder *Encoder) close(ctx context.Context) {
 }
 
 func (encoder *Encoder) IncomingSize() uint64 {
-	return PacketDataSize*encoder.encoder.data - ChunkHeaderSize
+	return PacketV2DataSize*encoder.encoder.data - ChunkHeaderSize
 }
 
 func (encoder *Encoder) OutgoingSize() uint64 {
-	return PacketSize
+	return PacketV2Size
 }
 
 func (encoder *Encoder) aggregatorFlush(ctx context.Context) {
@@ -96,7 +96,7 @@ func (encoder *Encoder) aggregatorFlush(ctx context.Context) {
 }
 
 func (encoder *Encoder) dispatch(ctx context.Context) {
-	var packet *Packet
+	var packet *PacketV2
 	var chunks = encoder.dispatcher.chunks
 	var perChunk = encoder.encoder.total
 	var size = chunks * perChunk
@@ -133,7 +133,7 @@ func (encoder *Encoder) encode(ctx context.Context) {
 	defer func() { encoder.encoder.csn = 0 }()
 	var err error
 	var data []byte
-	var packet *Packet
+	var packet *PacketV2
 encode:
 	for {
 		select {
@@ -160,9 +160,9 @@ encode:
 				} else {
 					kind = 1
 				}
-				packet, rem = NewPacket(kind, encoder.encoder.csn, uint32(i), AddrFec, data[i])
+				packet, rem = NewPacketV2(kind, encoder.encoder.csn, uint32(i), AddrFec, data[i])
 				if rem != nil {
-					log.Printf("encode: NewPacket: res is not nil: len %d", len(rem))
+					log.Printf("encode: NewPacketV2: res is not nil: len %d", len(rem))
 					continue
 				}
 
@@ -203,7 +203,7 @@ func (encoder *Encoder) aggregate(ctx context.Context) {
 
 func (encoder *Encoder) Encode(ctx context.Context) (in, out chan []byte, err error) {
 	encoder.resultQueue = make(chan []byte, 8*encoder.dispatcher.chunks)
-	encoder.dispatcherQueue = make(chan *Packet, 8*encoder.dispatcher.chunks)
+	encoder.dispatcherQueue = make(chan *PacketV2, 8*encoder.dispatcher.chunks)
 	encoder.encodeQueue = make(chan []byte, 64*encoder.encoder.data)
 	encoder.aggregateQueue = make(chan []byte, 64*encoder.encoder.data)
 

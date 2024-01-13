@@ -19,7 +19,7 @@ type Chunk struct {
 }
 
 func NewChunk(parts, csn uint64, kind uint8, data []byte) (*Chunk, []byte) {
-	var size = min(uint64(len(data)), parts*PacketDataSize)
+	var size = min(uint64(len(data)), parts*PacketV2DataSize)
 	var chunk = &Chunk{
 		parts: parts,
 
@@ -48,14 +48,14 @@ func (c *Chunk) Parts() uint64 {
 	return c.parts
 }
 
-// Len returns length of the chunk in bytes. It'll be multiples of PacketDataSize
+// Len returns length of the chunk in bytes. It'll be multiples of PacketV2DataSize
 func (c *Chunk) Len() uint64 {
-	return c.parts * PacketDataSize
+	return c.parts * PacketV2DataSize
 }
 
 // Marshal accepts total number of parts for allocation purposes. Values less than number of chunk's parts are ignored
 func (c *Chunk) Marshal(total uint64) [][]byte {
-	var dst = reedsolomon.AllocAligned(int(max(total, c.parts)), PacketDataSize)
+	var dst = reedsolomon.AllocAligned(int(max(total, c.parts)), PacketV2DataSize)
 	var i uint64 = 0
 
 	dst[i][0] = c.version

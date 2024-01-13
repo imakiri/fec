@@ -8,7 +8,7 @@ import (
 )
 
 func TestPacket(t *testing.T) {
-	const size = 2 * PacketDataSize
+	const size = 2 * PacketV2DataSize
 	var data = make([]byte, size)
 	n, _ := rand.Read(data)
 	require.EqualValues(t, size, n)
@@ -17,14 +17,14 @@ func TestPacket(t *testing.T) {
 	const csn = 3
 	const addr = 1
 
-	var packet, rem = NewPacket(1, csn, psn, addr, data)
+	var packet, rem = NewPacketV2(1, csn, psn, addr, data)
 	require.NotNil(t, rem)
 
-	packet, rem = NewPacket(1, csn, psn, addr, data[:PacketDataSize:PacketDataSize])
+	packet, rem = NewPacketV2(1, csn, psn, addr, data[:PacketV2DataSize:PacketV2DataSize])
 	require.Nil(t, rem)
 	var raw = packet.Marshal()
 
-	packet = new(Packet)
+	packet = new(PacketV2)
 	require.EqualValues(t, 0, packet.csn)
 
 	var ok = packet.Unmarshal(raw)
@@ -32,5 +32,5 @@ func TestPacket(t *testing.T) {
 	require.EqualValues(t, psn, packet.psn)
 	require.EqualValues(t, csn, packet.csn)
 	require.EqualValues(t, addr, packet.addr)
-	require.True(t, bytes.Equal(data[0:PacketDataSize], packet.data))
+	require.True(t, bytes.Equal(data[0:PacketV2DataSize], packet.data))
 }

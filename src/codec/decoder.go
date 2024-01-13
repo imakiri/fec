@@ -16,7 +16,7 @@ type Decoder struct {
 		lastOk  bool
 		csn     []uint64
 		found   []uint64
-		packets []*Packet
+		packets []*PacketV2
 
 		ok  *uint64
 		err *uint64
@@ -43,8 +43,8 @@ type Decoder struct {
 	}
 
 	argumentQueue chan []byte
-	assemblyQueue chan *Packet
-	restoreQueue  chan []*Packet
+	assemblyQueue chan *PacketV2
+	restoreQueue  chan []*PacketV2
 	dispatchQueue chan *Chunk
 	resultQueue   chan []byte
 }
@@ -78,7 +78,7 @@ func NewDecoder(dataParts, totalParts, assemblerLines, dispatcherSize uint64) (d
 	decoder.assembler.lines = assemblerLines
 	decoder.assembler.found = make([]uint64, decoder.assembler.lines)
 	decoder.assembler.csn = make([]uint64, decoder.assembler.lines)
-	decoder.assembler.packets = make([]*Packet, decoder.assembler.lines*decoder.restorer.total)
+	decoder.assembler.packets = make([]*PacketV2, decoder.assembler.lines*decoder.restorer.total)
 	decoder.assembler.ok = new(uint64)
 	decoder.assembler.err = new(uint64)
 
@@ -178,7 +178,7 @@ dispatch:
 }
 
 func (decoder *Decoder) restore(ctx context.Context) {
-	var packets []*Packet
+	var packets []*PacketV2
 	var data = make([][]byte, decoder.restorer.total)
 	var chunk *Chunk
 	var err error
@@ -220,7 +220,7 @@ restore:
 }
 
 func (decoder *Decoder) assembly(ctx context.Context) {
-	var packet *Packet
+	var packet *PacketV2
 assembly:
 	for {
 		select {
@@ -264,7 +264,7 @@ assembly:
 				decoder.assembler.found[atChunk]++
 
 				if decoder.assembler.found[atChunk] >= decoder.restorer.data {
-					var data = make([]*Packet, decoder.restorer.total)
+					var data = make([]*PacketV2, decoder.restorer.total)
 					copy(data, decoder.assembler.packets[chunkStart:chunkEnd])
 
 					select {
@@ -314,7 +314,7 @@ func (decoder *Decoder) reset() {
 	//	decoder.assembler.last = 0
 	//	decoder.assembler.found = make([]uint64, decoder.assembler.lines)
 	//	decoder.assembler.csn = make([]uint64, decoder.assembler.lines)
-	//	decoder.assembler.packets = make([]*Packet, decoder.assembler.lines*decoder.restorer.total)
+	//	decoder.assembler.packets = make([]*PacketV2, decoder.assembler.lines*decoder.restorer.total)
 	//
 	//	decoder.dispatcher.reset <- struct{}{}
 	//}
@@ -323,7 +323,7 @@ func (decoder *Decoder) reset() {
 func (decoder *Decoder) decode(ctx context.Context) {
 	var n int
 	var data []byte
-	var packet *Packet
+	var packet *PacketV2
 	var ok bool
 decode:
 	for {
@@ -331,12 +331,12 @@ decode:
 		case <-ctx.Done():
 			return
 		case data = <-decoder.argumentQueue:
-			if len(data) != PacketSize {
+			if len(data) != PacketV2Size {
 				log.Printf("decode: invalid data: %d bytes", n)
 				continue decode
 			}
 
-			packet = new(Packet)
+			packet = new(PacketV2)
 			ok = packet.Unmarshal(data)
 			if !ok {
 				log.Println("decode: packet.Unmarshal is not ok")
@@ -368,18 +368,18 @@ func (decoder *Decoder) close(ctx context.Context) {
 }
 
 func (decoder *Decoder) IncomingSize() uint64 {
-	return PacketSize
+	return PacketV2Size
 }
 
 func (decoder *Decoder) OutgoingSize() uint64 {
-	return PacketDataSize*decoder.restorer.data - ChunkHeaderSize
+	return PacketV2DataSize*decoder.restorer.data - ChunkHeaderSize
 }
 
 func (decoder *Decoder) Decode(ctx context.Context) (in, out chan []byte, err error) {
 	decoder.resultQueue = make(chan []byte, 16*decoder.restorer.data)
 	decoder.dispatchQueue = make(chan *Chunk, 16)
-	decoder.restoreQueue = make(chan []*Packet, 16*decoder.restorer.data)
-	decoder.assemblyQueue = make(chan *Packet, 16*decoder.restorer.data)
+	decoder.restoreQueue = make(chan []*PacketV2, 16*decoder.restorer.data)
+	decoder.assemblyQueue = make(chan *PacketV2, 16*decoder.restorer.data)
 	decoder.argumentQueue = make(chan []byte, 16*decoder.restorer.data)
 
 	go decoder.dispatch(ctx)

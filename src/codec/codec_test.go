@@ -77,7 +77,7 @@ func TestCodec(t *testing.T) {
 
 	go func() {
 		var data []byte
-		var packet *Packet
+		var packet *PacketV2
 		var ok bool
 		for {
 			select {
@@ -85,7 +85,7 @@ func TestCodec(t *testing.T) {
 				return
 			case data = <-encoderOut:
 				// no packet loss for now
-				packet = new(Packet)
+				packet = new(PacketV2)
 				ok = packet.Unmarshal(data)
 				require.True(t, ok)
 				//t.Log(packet)

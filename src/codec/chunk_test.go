@@ -7,7 +7,7 @@ import (
 )
 
 func TestChunk(t *testing.T) {
-	const size = 50 * PacketSize
+	const size = 50 * PacketV2Size
 	var data = make([]byte, size)
 	n, _ := rand.Read(data)
 	require.EqualValues(t, size, n)
@@ -18,22 +18,22 @@ func TestChunk(t *testing.T) {
 	var chunk, rem = NewChunk(parts, csn, kind, data)
 	require.NotNil(t, rem)
 
-	chunk, rem = NewChunk(parts, csn, kind, data[:parts*PacketDataSize])
+	chunk, rem = NewChunk(parts, csn, kind, data[:parts*PacketV2DataSize])
 	require.Nil(t, rem)
 	require.EqualValues(t, parts, chunk.parts)
 	require.EqualValues(t, csn, chunk.csn)
 	require.EqualValues(t, kind, chunk.kind)
-	require.EqualValues(t, parts*PacketDataSize, chunk.size)
-	require.EqualValues(t, data[:parts*PacketDataSize], chunk.data)
+	require.EqualValues(t, parts*PacketV2DataSize, chunk.size)
+	require.EqualValues(t, data[:parts*PacketV2DataSize], chunk.data)
 
-	chunk, rem = NewChunk(parts, csn, kind, data[:PacketDataSize])
+	chunk, rem = NewChunk(parts, csn, kind, data[:PacketV2DataSize])
 	require.Nil(t, rem)
 	require.EqualValues(t, parts, chunk.parts)
 	require.EqualValues(t, csn, chunk.csn)
 	require.EqualValues(t, kind, chunk.kind)
-	require.EqualValues(t, PacketDataSize, chunk.size)
+	require.EqualValues(t, PacketV2DataSize, chunk.size)
 	require.EqualValues(t, parts, chunk.Parts())
-	require.EqualValues(t, data[:PacketDataSize], chunk.data)
+	require.EqualValues(t, data[:PacketV2DataSize], chunk.data)
 
 	const total = 10
 	var payload = chunk.Marshal(total)
@@ -49,7 +49,7 @@ func TestChunk(t *testing.T) {
 	require.EqualValues(t, parts, chunk.parts)
 	require.EqualValues(t, csn, chunk.csn)
 	require.EqualValues(t, kind, chunk.kind)
-	require.EqualValues(t, PacketDataSize, chunk.size)
+	require.EqualValues(t, PacketV2DataSize, chunk.size)
 	require.EqualValues(t, parts, chunk.Parts())
-	require.EqualValues(t, data[:PacketDataSize], chunk.data)
+	require.EqualValues(t, data[:PacketV2DataSize], chunk.data)
 }

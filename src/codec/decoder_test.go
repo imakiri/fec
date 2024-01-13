@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func requirePackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint64]map[uint64][]byte) {
+func requirePackets(t *testing.T, packets []*PacketV2, csn uint64, expect map[uint64]map[uint64][]byte) {
 	var expectPackets, ok = expect[csn]
 	if !ok {
 		require.Fail(t, "invalid test data")
@@ -39,9 +39,9 @@ func requirePackets(t *testing.T, packets []*Packet, csn uint64, expect map[uint
 	}
 }
 
-func casePacket(csn, psn uint64, expect map[uint64]map[uint64][]byte) *Packet {
+func casePacket(csn, psn uint64, expect map[uint64]map[uint64][]byte) *PacketV2 {
 	var data = []byte(fmt.Sprintf("%d.%d", csn, psn))
-	var packet, _ = NewPacket(1, csn, uint32(psn), KindData, data)
+	var packet, _ = NewPacketV2(1, csn, uint32(psn), KindData, data)
 	if expect[csn] == nil {
 		expect[csn] = make(map[uint64][]byte)
 	}
@@ -56,11 +56,11 @@ func TestAssembler(t *testing.T) {
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 
-	decoder.restoreQueue = make(chan []*Packet, 4)
-	decoder.assemblyQueue = make(chan *Packet, 8)
+	decoder.restoreQueue = make(chan []*PacketV2, 4)
+	decoder.assemblyQueue = make(chan *PacketV2, 8)
 	go decoder.assembly(ctx)
 
-	var packets []*Packet
+	var packets []*PacketV2
 	var expect = make(map[uint64]map[uint64][]byte)
 
 	decoder.assemblyQueue <- casePacket(1, 0, expect)
@@ -109,7 +109,7 @@ func TestRestorer(t *testing.T) {
 	var ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 
-	decoder.restoreQueue = make(chan []*Packet, 4)
+	decoder.restoreQueue = make(chan []*PacketV2, 4)
 	decoder.dispatchQueue = make(chan *Chunk, 4)
 	go decoder.restore(ctx)
 
@@ -117,8 +117,8 @@ func TestRestorer(t *testing.T) {
 	var buf [][]byte
 	var rem = []byte{}
 	var chunkGot *Chunk
-	var packet *Packet
-	var packets = make([]*Packet, totalParts)
+	var packet *PacketV2
+	var packets = make([]*PacketV2, totalParts)
 
 	chunkExpected, _ = NewChunk(4, 1, KindData, []byte("123"))
 	buf = chunkExpected.Marshal(6)
@@ -127,7 +127,7 @@ func TestRestorer(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := range buf {
-		packet, rem = NewPacket(1, 1, uint32(i), AddrFec, buf[i])
+		packet, rem = NewPacketV2(1, 1, uint32(i), AddrFec, buf[i])
 		assert.Nil(t, rem)
 		packets[i] = packet
 	}
@@ -146,7 +146,7 @@ func TestRestorer(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := range buf {
-		packet, rem = NewPacket(1, 2, uint32(i), AddrFec, buf[i])
+		packet, rem = NewPacketV2(1, 2, uint32(i), AddrFec, buf[i])
 		assert.Nil(t, rem)
 		packets[i] = packet
 	}

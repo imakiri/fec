@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -18,7 +19,15 @@ const udpMax = 1472
 
 var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
+type Stat struct {
+	ID       uint64
+	Sent     int64
+	Received int64
+}
+
 type Client struct {
+	stats *os.File
+
 	portCaller   uint16
 	portListener uint16
 
@@ -59,7 +68,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		}
 
 		log.Println("local listener at", client.listenerConn.LocalAddr().String())
-		client.listenerConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
+		client.listenerConn.SetWriteBuffer(20 * (codec2.PacketV2Size + 12))
 	}
 	{
 		var dialer = net.Dialer{
@@ -85,7 +94,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		}
 
 		log.Println("local caller to", client.callerConn.RemoteAddr().String())
-		client.callerConn.SetWriteBuffer(20 * (codec2.PacketSize + 12))
+		client.callerConn.SetWriteBuffer(20 * (codec2.PacketV2Size + 12))
 	}
 
 	var dialer = net.Dialer{
@@ -109,7 +118,7 @@ func (client *Client) connect(ctx context.Context, peerID uuid.UUID) error {
 		return errors.New("connect: connection.(*net.UDPConn) is not ok")
 	}
 
-	client.serverConn.SetReadBuffer(20 * (codec2.PacketSize + 12))
+	client.serverConn.SetReadBuffer(20 * (codec2.PacketV2Size + 12))
 	go func() {
 		<-ctx.Done()
 		client.serverConn.Close()
@@ -265,6 +274,11 @@ func (client *Client) Run(ctx context.Context, peerID uuid.UUID, handler Handler
 		return errors.Wrap(err, "reader")
 	}
 
+	var i int
+	for err = errors.New(""); err != nil; i++ {
+		client.stats, err = os.Create(fmt.Sprintf("stats_%d", i))
+	}
+
 	go client.routeIn(ctx)
 	go client.routeOut(ctx)
 	return nil
@@ -273,6 +287,7 @@ func (client *Client) Run(ctx context.Context, peerID uuid.UUID, handler Handler
 type Config struct {
 	Peer struct {
 		ID           string
+		Mode         string
 		PortCaller   uint16
 		PortListener uint16
 	}

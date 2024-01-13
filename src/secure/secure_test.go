@@ -14,15 +14,15 @@ func TestSecure(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 32, n)
 
-	var plainText = make([]byte, codec.PacketSize)
+	var plainText = make([]byte, codec.PacketV2Size)
 	copy(plainText, "1231234412312344qweqwetrt")
 	var buf = make([]byte, 1472)
 	var net = new(bytes.Buffer)
 
-	reader, err := NewReader(codec.PacketSize, secret, net)
+	reader, err := NewReader(codec.PacketV2Size, secret, net)
 	require.NoError(t, err)
 
-	writer, err := NewWriter(codec.PacketSize, secret, net)
+	writer, err := NewWriter(codec.PacketV2Size, secret, net)
 	require.NoError(t, err)
 
 	n, err = writer.Write(plainText)
