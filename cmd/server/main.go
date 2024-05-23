@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/go-faster/errors"
 	"github.com/gofrs/uuid/v5"
@@ -21,7 +22,7 @@ type Peer struct {
 }
 
 type Server struct {
-	port uint16
+	addr string
 
 	peers  [2]Peer
 	server *net.UDPConn
@@ -33,10 +34,10 @@ type Server struct {
 	totalSent           *uint64
 }
 
-func NewServer(port uint16, logger *uilive.Writer) *Server {
+func NewServer(addr string, logger *uilive.Writer) *Server {
 	var server = new(Server)
 	server.logger = logger
-	server.port = port
+	server.addr = addr
 	return server
 }
 
@@ -182,8 +183,6 @@ serve:
 	}
 }
 
-const addr = "127.0.0.1:10900"
-
 func (s *Server) Serve(ctx context.Context) error {
 	s.totalReceived = new(uint64)
 	s.totalSent = new(uint64)
@@ -193,7 +192,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		KeepAlive: 0,
 	}
 
-	var server, err = config.ListenPacket(ctx, "udp4", addr)
+	fmt.Println("starting server at:", s.addr)
+	var server, err = config.ListenPacket(ctx, "udp4", s.addr)
 	if err != nil {
 		return errors.Wrap(err, "config.ListenPacket")
 	}
@@ -236,15 +236,18 @@ func (s *Server) Serve(ctx context.Context) error {
 	return nil
 }
 
-const udpMax = 1472
+const udpMax = 1500
 
 func main() {
+	var addr = flag.String("addr", "127.0.0.1:25565", "address of a server")
+	flag.Parse()
+
 	var logger = uilive.New()
 	logger.Start()
 	logger.RefreshInterval = time.Second
 	log.SetOutput(logger.Bypass())
 
-	var server = NewServer(25565, logger)
+	var server = NewServer(*addr, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
