@@ -143,12 +143,12 @@ serve:
 			}
 			atomic.AddUint64(s.totalReceived, uint64(n))
 
-			var peerID = s.checkHandshake(buf)
+			var peerID = s.checkHandshake(buf[:n])
 			if peerID != uuid.Nil {
 				log.Printf("incomming handshake from %s", addr.AddrPort().String())
 				s.setRoute(peerID, addr)
 
-				m, err := s.server.WriteToUDP(buf, addr)
+				m, err := s.server.WriteToUDP(buf[:n], addr)
 				if err != nil {
 					log.Println(errors.Wrap(err, "serve: handshake s.server.WriteToUDP"))
 					continue serve
@@ -236,7 +236,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	return nil
 }
 
-const udpMax = 1500
+const udpMax = 1<<16 - 1
 
 func main() {
 	var addr = flag.String("addr", "127.0.0.1:25565", "address of a server")

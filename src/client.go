@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const udpMax = 1472
+const udpMax = 1500
 
 var UID = uuid.Must(uuid.FromString("1751b2a1-0ffd-44fe-8a2e-d3f153125c43")).Bytes()
 
